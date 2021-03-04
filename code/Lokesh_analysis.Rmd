@@ -1,0 +1,394 @@
+---
+title: "Lokesh country specific analysis"
+author: "Lokesh"
+date: "`r paste0('<b>Lokesh Mano</b> • ',format(Sys.time(), '%d-%b-%Y'))`"
+output: 
+  rmarkdown::html_document:
+    code_folding: 'hide'
+    toc: true
+    toc_float: true
+    smart: true
+    number_sections: true
+    highlight: tango
+    self_contained: true
+    smaller: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r wrap-hook, include=FALSE}
+# Ignore this part! This is only for formatting this document in the html file!
+library(knitr)
+hook_output = knit_hooks$get('output')
+knit_hooks$set(output = function(x, options) {
+  # this hook is used only when the linewidth option is not NULL
+  if (!is.null(n <- options$linewidth)) {
+    x = knitr:::split_lines(x)
+    # any lines wider than n should be wrapped
+    if (any(nchar(x) > n)) x = strwrap(x, width = n)
+    x = paste(x, collapse = '\n')
+  }
+  hook_output(x, options)
+})
+```
+
+I am working here with processed data from Katja. Meaning that the counts I get here are already filtered using a specific function that filters out low count genes: `FilterbyExpresseion()` or something similar is the name of the function.
+
+# Reading in files
+
+```{r, message=FALSE, warning=FALSE}
+tdb_fam <- read.csv("../data/dataTDB/TDB_EZfam/TDB_EZfam_filt.counts.tsv", sep = "\t", header = T, row.names = 1)
+tdb_acc <- read.csv("../data/dataTDB/TDB_EZacc/TDB_EZacc_filt.counts.tsv", sep = "\t", header = T, row.names = 1)
+uniref <- read.csv("../data/dataUNIREF90/uniref_filt.counts.tsv", sep = "\t", header = T, row.names = 1)
+metadat <- read.csv("../data/metafile/metafile_relaxed.csv", sep = ",", header = T)
+row.names(metadat) <- metadat$sample_ID
+metadat$field_pair <- as.factor(metadat$field_pair)
+```
+
+# Over all correction with countries
+
+## Family
+
+```{r, message=FALSE, warning=FALSE}
+library(DESeq2)
+library(limma)
+library(ggplot2)
+library(cowplot)
+
+dds_fam <- DESeqDataSetFromMatrix(countData = tdb_fam,
+                              colData = metadat,
+                              design= ~ country + treatment)
+
+vsd_fam <- varianceStabilizingTransformation(dds_fam)
+
+p1 <- plotPCA(vsd_fam, "country")
+p2 <- plotPCA(vsd_fam, "treatment")
+plot_grid(p1, p2)
+```
+
+### Batch correction on countries
+
+```{r, message=FALSE, warning=FALSE}
+vsd_fam_remCOUNTRY <- vsd_fam
+assay(vsd_fam_remCOUNTRY) <- limma::removeBatchEffect(assay(vsd_fam_remCOUNTRY), vsd_fam_remCOUNTRY$country)
+p1 <- plotPCA(vsd_fam_remCOUNTRY, "country")
+p2 <- plotPCA(vsd_fam_remCOUNTRY, "treatment")
+plot_grid(p1, p2)
+```
+
+
+
+## Accession
+
+```{r, warning=FALSE, message=FALSE}
+dds_acc <- DESeqDataSetFromMatrix(countData = tdb_acc,
+                              colData = metadat[match(colnames(tdb_acc), rownames(metadat)), ],
+                              design= ~ country + treatment)
+
+vsd_acc <- varianceStabilizingTransformation(dds_acc)
+
+p1 <- plotPCA(vsd_acc, "country")
+p2 <- plotPCA(vsd_acc, "treatment")
+plot_grid(p1, p2)
+```
+
+### Batch correction on countries
+
+```{r, message=FALSE, warning=FALSE}
+vsd_acc_remCOUNTRY <- vsd_acc
+assay(vsd_acc_remCOUNTRY) <- limma::removeBatchEffect(assay(vsd_acc_remCOUNTRY), vsd_acc_remCOUNTRY$country)
+p1 <- plotPCA(vsd_acc_remCOUNTRY, "country")
+p2 <- plotPCA(vsd_acc_remCOUNTRY, "treatment")
+plot_grid(p1, p2)
+```
+
+## UniRef
+
+```{r, warning=FALSE, message=FALSE}
+dds_uni <- DESeqDataSetFromMatrix(countData = uniref,
+                              colData = metadat[match(colnames(uniref), rownames(metadat)), ],
+                              design= ~ country + treatment)
+
+vsd_uni <- varianceStabilizingTransformation(dds_uni)
+
+p1 <- plotPCA(vsd_uni, "country")
+p2 <- plotPCA(vsd_uni, "treatment")
+plot_grid(p1, p2)
+```
+
+### Batch correction on countries
+
+```{r, message=FALSE, warning=FALSE}
+vsd_uni_remCOUNTRY <- vsd_uni
+assay(vsd_uni_remCOUNTRY) <- limma::removeBatchEffect(assay(vsd_uni_remCOUNTRY), vsd_uni_remCOUNTRY$country)
+p1 <- plotPCA(vsd_uni_remCOUNTRY, "country")
+p2 <- plotPCA(vsd_uni_remCOUNTRY, "treatment")
+plot_grid(p1, p2)
+```
+
+Looks like there are 2 particular samples in Spain that is still carrying the most variance on PC1 after removing the batch effect of the country! From what I understand from the help pages: if you have design matrix for limma like: `design <- model.matrix(~0+treatment+country)` followed by `fit<-lmFit(assay,design)`. you technically tell limma that you want to consider the country as one of the driving factors. So, when you look for differential abundance, you can use `results` and `contrast` function to get exactly which variable you are after. In this case, the variation due to country is removed when you look for treatment.
+
+In DESeq2, you specify the batch variable first in the design matrix as I have noticed ;)
+
+# Sweden
+
+```{r, message=FALSE, warning=FALSE}
+library(dplyr)
+library(tidyverse)
+
+se_metadat <- metadat %>%
+  filter(country == "SE")
+
+se_tdb_fam <- tdb_fam[,colnames(tdb_fam) %in% rownames(se_metadat)]
+
+se_dds_fam <- DESeqDataSetFromMatrix(countData = se_tdb_fam,
+                              colData = se_metadat[match(colnames(se_tdb_fam), rownames(se_metadat)), ],
+                              design= ~ field_pair + treatment)
+
+se_vsd_fam <- varianceStabilizingTransformation(se_dds_fam)
+
+p1 <- plotPCA(se_vsd_fam, "field_pair")
+p2 <- plotPCA(se_vsd_fam, "treatment")
+plot_grid(p1, p2)
+```
+
+### Batch correction on countries
+
+```{r, message=FALSE, warning=FALSE}
+se_vsd_fam_remFP <- se_vsd_fam
+assay(se_vsd_fam_remFP) <- limma::removeBatchEffect(assay(se_vsd_fam_remFP), se_vsd_fam_remFP$field_pair)
+p1 <- plotPCA(se_vsd_fam_remFP, "field_pair")
+p2 <- plotPCA(se_vsd_fam_remFP, "treatment")
+plot_grid(p1, p2)
+```
+
+
+
+## Accession
+
+```{r, warning=FALSE, message=FALSE}
+se_tdb_acc <- tdb_acc[,colnames(tdb_acc) %in% rownames(se_metadat)]
+
+se_dds_acc <- DESeqDataSetFromMatrix(countData = se_tdb_acc,
+                              colData = se_metadat[match(colnames(se_tdb_acc), rownames(se_metadat)), ],
+                              design= ~ field_pair + treatment)
+
+se_vsd_acc <- varianceStabilizingTransformation(se_dds_acc)
+
+p1 <- plotPCA(se_vsd_acc, "field_pair")
+p2 <- plotPCA(se_vsd_acc, "treatment")
+plot_grid(p1, p2)
+```
+
+### Batch correction on countries
+
+```{r, message=FALSE, warning=FALSE}
+se_vsd_acc_remFP <- se_vsd_acc
+assay(se_vsd_acc_remFP) <- limma::removeBatchEffect(assay(se_vsd_acc_remFP), se_vsd_acc_remFP$field_pair)
+p1 <- plotPCA(se_vsd_acc_remFP, "field_pair")
+p2 <- plotPCA(se_vsd_acc_remFP, "treatment")
+plot_grid(p1, p2)
+```
+
+## UniRef
+
+```{r, warning=FALSE, message=FALSE}
+se_uniref <- uniref[,colnames(uniref) %in% rownames(se_metadat)]
+
+se_dds_uni <- DESeqDataSetFromMatrix(countData = se_uniref,
+                              colData = se_metadat[match(colnames(se_uniref), rownames(se_metadat)), ],
+                              design= ~ field_pair + treatment)
+
+se_vsd_uni <- varianceStabilizingTransformation(se_dds_uni)
+
+p1 <- plotPCA(se_vsd_uni, "field_pair")
+p2 <- plotPCA(se_vsd_uni, "treatment")
+plot_grid(p1, p2)
+
+```
+
+### Batch correction on countries
+
+```{r, message=FALSE, warning=FALSE}
+se_vsd_uni_remFP <- se_vsd_uni
+assay(se_vsd_uni_remFP) <- limma::removeBatchEffect(assay(se_vsd_uni_remFP), se_vsd_uni_remFP$field_pair)
+p1 <- plotPCA(se_vsd_uni_remFP, "field_pair")
+p2 <- plotPCA(se_vsd_uni_remFP, "treatment")
+plot_grid(p1, p2)
+```
+
+# Germany
+
+```{r, message=FALSE, warning=FALSE}
+
+de_metadat <- metadat %>%
+  filter(country == "DE")
+
+de_tdb_fam <- tdb_fam[,colnames(tdb_fam) %in% rownames(de_metadat)]
+
+de_dds_fam <- DESeqDataSetFromMatrix(countData = de_tdb_fam,
+                              colData = de_metadat[match(colnames(de_tdb_fam), rownames(de_metadat)), ],
+                              design= ~ field_pair + treatment)
+
+de_vsd_fam <- varianceStabilizingTransformation(de_dds_fam)
+
+p1 <- plotPCA(de_vsd_fam, "field_pair")
+p2 <- plotPCA(de_vsd_fam, "treatment")
+plot_grid(p1, p2)
+```
+
+### Batch correction on countries
+
+```{r, message=FALSE, warning=FALSE}
+de_vsd_fam_remFP <- de_vsd_fam
+assay(de_vsd_fam_remFP) <- limma::removeBatchEffect(assay(de_vsd_fam_remFP), de_vsd_fam_remFP$field_pair)
+p1 <- plotPCA(de_vsd_fam_remFP, "field_pair")
+p2 <- plotPCA(de_vsd_fam_remFP, "treatment")
+plot_grid(p1, p2)
+```
+
+
+
+## Accession
+
+```{r, warning=FALSE, message=FALSE}
+de_tdb_acc <- tdb_acc[,colnames(tdb_acc) %in% rownames(de_metadat)]
+
+de_dds_acc <- DESeqDataSetFromMatrix(countData = de_tdb_acc,
+                              colData = de_metadat[match(colnames(de_tdb_acc), rownames(de_metadat)), ],
+                              design= ~ field_pair + treatment)
+
+de_vsd_acc <- varianceStabilizingTransformation(de_dds_acc)
+
+p1 <- plotPCA(de_vsd_acc, "field_pair")
+p2 <- plotPCA(de_vsd_acc, "treatment")
+plot_grid(p1, p2)
+```
+
+### Batch correction on countries
+
+```{r, message=FALSE, warning=FALSE}
+de_vsd_acc_remFP <- de_vsd_acc
+assay(de_vsd_acc_remFP) <- limma::removeBatchEffect(assay(de_vsd_acc_remFP), de_vsd_acc_remFP$field_pair)
+p1 <- plotPCA(de_vsd_acc_remFP, "field_pair")
+p2 <- plotPCA(de_vsd_acc_remFP, "treatment")
+plot_grid(p1, p2)
+```
+
+## UniRef
+
+```{r, warning=FALSE, message=FALSE}
+de_uniref <- uniref[,colnames(uniref) %in% rownames(de_metadat)]
+
+de_dds_uni <- DESeqDataSetFromMatrix(countData = de_uniref,
+                              colData = de_metadat[match(colnames(de_uniref), rownames(de_metadat)), ],
+                              design= ~ field_pair + treatment)
+
+de_vsd_uni <- varianceStabilizingTransformation(de_dds_uni)
+
+p1 <- plotPCA(de_vsd_uni, "field_pair")
+p2 <- plotPCA(de_vsd_uni, "treatment")
+plot_grid(p1, p2)
+
+```
+
+### Batch correction on countries
+
+```{r, message=FALSE, warning=FALSE}
+de_vsd_uni_remFP <- de_vsd_uni
+assay(de_vsd_uni_remFP) <- limma::removeBatchEffect(assay(de_vsd_uni_remFP), de_vsd_uni_remFP$field_pair)
+p1 <- plotPCA(de_vsd_uni_remFP, "field_pair")
+p2 <- plotPCA(de_vsd_uni_remFP, "treatment")
+plot_grid(p1, p2)
+```
+
+# Spain
+
+```{r, message=FALSE, warning=FALSE}
+
+es_metadat <- metadat %>%
+  filter(country == "ES")
+
+es_tdb_fam <- tdb_fam[,colnames(tdb_fam) %in% rownames(es_metadat)]
+
+es_dds_fam <- DESeqDataSetFromMatrix(countData = es_tdb_fam,
+                              colData = es_metadat[match(colnames(es_tdb_fam), rownames(es_metadat)), ],
+                              design= ~ field_pair + treatment)
+
+es_vsd_fam <- varianceStabilizingTransformation(es_dds_fam)
+
+p1 <- plotPCA(es_vsd_fam, "field_pair")
+p2 <- plotPCA(es_vsd_fam, "treatment")
+plot_grid(p1, p2)
+```
+
+### Batch correction on countries
+
+```{r, message=FALSE, warning=FALSE}
+es_vsd_fam_remFP <- es_vsd_fam
+assay(es_vsd_fam_remFP) <- limma::removeBatchEffect(assay(es_vsd_fam_remFP), es_vsd_fam_remFP$field_pair)
+p1 <- plotPCA(es_vsd_fam_remFP, "field_pair")
+p2 <- plotPCA(es_vsd_fam_remFP, "treatment")
+plot_grid(p1, p2)
+```
+
+
+
+## Accession
+
+```{r, warning=FALSE, message=FALSE}
+es_tdb_acc <- tdb_acc[,colnames(tdb_acc) %in% rownames(es_metadat)]
+
+es_dds_acc <- DESeqDataSetFromMatrix(countData = es_tdb_acc,
+                              colData = es_metadat[match(colnames(es_tdb_acc), rownames(es_metadat)), ],
+                              design= ~ field_pair + treatment)
+
+es_vsd_acc <- varianceStabilizingTransformation(es_dds_acc)
+
+p1 <- plotPCA(es_vsd_acc, "field_pair")
+p2 <- plotPCA(es_vsd_acc, "treatment")
+plot_grid(p1, p2)
+```
+
+### Batch correction on countries
+
+```{r, message=FALSE, warning=FALSE}
+es_vsd_acc_remFP <- es_vsd_acc
+assay(es_vsd_acc_remFP) <- limma::removeBatchEffect(assay(es_vsd_acc_remFP), es_vsd_acc_remFP$field_pair)
+p1 <- plotPCA(es_vsd_acc_remFP, "field_pair")
+p2 <- plotPCA(es_vsd_acc_remFP, "treatment")
+plot_grid(p1, p2)
+```
+
+## UniRef
+
+```{r, warning=FALSE, message=FALSE}
+es_uniref <- uniref[,colnames(uniref) %in% rownames(es_metadat)]
+
+es_dds_uni <- DESeqDataSetFromMatrix(countData = es_uniref,
+                              colData = es_metadat[match(colnames(es_uniref), rownames(es_metadat)), ],
+                              design= ~ field_pair + treatment)
+
+es_vsd_uni <- varianceStabilizingTransformation(es_dds_uni)
+
+p1 <- plotPCA(es_vsd_uni, "field_pair")
+p2 <- plotPCA(es_vsd_uni, "treatment")
+plot_grid(p1, p2)
+
+```
+
+### Batch correction on countries
+
+```{r, message=FALSE, warning=FALSE}
+es_vsd_uni_remFP <- es_vsd_uni
+assay(es_vsd_uni_remFP) <- limma::removeBatchEffect(assay(es_vsd_uni_remFP), es_vsd_uni_remFP$field_pair)
+p1 <- plotPCA(es_vsd_uni_remFP, "field_pair")
+p2 <- plotPCA(es_vsd_uni_remFP, "treatment")
+plot_grid(p1, p2)
+```
+
+
+
