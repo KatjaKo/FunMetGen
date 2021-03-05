@@ -135,6 +135,8 @@ In DESeq2, you specify the batch variable first in the design matrix as I have n
 
 # Sweden
 
+## Family
+
 ```{r, message=FALSE, warning=FALSE}
 library(dplyr)
 library(tidyverse)
@@ -222,6 +224,8 @@ plot_grid(p1, p2)
 
 # Germany
 
+## Family
+
 ```{r, message=FALSE, warning=FALSE}
 
 de_metadat <- metadat %>%
@@ -306,6 +310,8 @@ plot_grid(p1, p2)
 ```
 
 # Spain
+
+## Family
 
 ```{r, message=FALSE, warning=FALSE}
 
