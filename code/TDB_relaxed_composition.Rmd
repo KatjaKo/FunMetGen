@@ -1,0 +1,603 @@
+---
+title: "TDB_relaxed functional composition"
+author: "Katja Kozjek"
+output: 
+  rmarkdown::html_document:
+    code_folding: 'hide'
+    toc: true
+    toc_float: true
+    smart: true
+    number_sections: false
+    highlight: tango
+    self_contained: true
+    smaller: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r wrap-hook, include=FALSE}
+library(knitr)
+hook_output = knit_hooks$get('output')
+knit_hooks$set(output = function(x, options) {
+  # this hook is used only when the linewidth option is not NULL
+  if (!is.null(n <- options$linewidth)) {
+    x = knitr:::split_lines(x)
+    # any lines wider than n should be wrapped
+    if (any(nchar(x) > n)) x = strwrap(x, width = n)
+    x = paste(x, collapse = '\n')
+  }
+  hook_output(x, options)
+})
+```
+
+# Load libraries
+
+```{r load libraries, message=F, warning=F}
+library(rafalib) # nice plot arrangement
+library(phyloseq)
+library(ranacapa) #for rarefaction curves
+library(ggplot2)
+library(wesanderson)
+library(DESeq2)
+library(vegan)
+library(ggordiplots)
+library(scales)
+library(dplyr)
+library(tibble)
+library(devtools)
+library(pairwiseAdonis)
+library(limma)
+library(cowplot)
+library(tidyverse)
+```
+
+Analyses related to functional composition. Counts are filtered using a function filterByExpr. PCA and PERMANOVA are conducted with and without batch correction approach. For overall composition, batch correction is on countries, for each country separately batch correction is on field pair. Envfit added to the overall functional composition, soil and plant parameters are pre-selected. 
+
+# Upload files
+
+```{r load files, message=FALSE, warning=FALSE}
+
+tdb_fam <- read.csv("C:/Users/Katja/Box Sync/PhD Lund Katja/Sequencing/Functional_genes/Diamond/data_TDB/relaxed/TDB_EZfam_rem_filt.counts.tsv", sep = "\t", header = T, row.names = 1)
+
+tdb_acc <- read.csv("C:/Users/Katja/Box Sync/PhD Lund Katja/Sequencing/Functional_genes/Diamond/data_TDB/relaxed/TDB_EZacc_rem_filt.counts.tsv",sep = "\t", header = T, row.names = 1)
+
+metafile = read.csv("C:/Users/Katja/Box Sync/PhD Lund Katja/Sequencing/Functional_genes/Diamond/data_TDB/relaxed/metafile_relaxed.csv", sep=",", row.names=1)
+
+metafile_remove <- metafile[-c(58,60),]
+
+metafile_pca <- read.csv("C:/Users/Katja/Box Sync/PhD Lund Katja/Sequencing/Functional_genes/Diamond/data_TDB/relaxed/metafile_relaxed.csv", sep=",")
+metafile_pca <- metafile_pca[-c(58,60),] #for pca dataframe
+
+sampledata = sample_data(metafile)
+sampledata_remove <- sampledata[-c(58,60),]
+
+```
+
+# PCA overall TDB EZfam
++ using counts filterByExpr
++ 2 Spanish samples are excluded
+
+```{r PCA EZfam overall, message=FALSE, warning=FALSE}
+
+dds_fam <- DESeqDataSetFromMatrix(countData = tdb_fam,
+                              colData = metafile_remove,
+                              design= ~ country + treatment)
+
+vsd_fam <- varianceStabilizingTransformation(dds_fam)
+vsd_fam_counts <- assay(vsd_fam) 
+
+p1_EZfam_country <- plotPCA(vsd_fam, "country")
+p2_EZfam_treat <- plotPCA(vsd_fam, "treatment")
+plot_grid(p1_EZfam_country, p2_EZfam_treat)
+
+#PERMANOVA
+
+vsd_fam_counts <- t(vsd_fam_counts)
+set.seed(4364)
+adonis2(vsd_fam_counts ~ country*treatment, 
+       data=metafile_remove, strata=metafile_remove$plot, permutations=999)
+
+```
+***EZfam level, country effect***
+
+## Nice PCA EZfam
+
+```{r PCA EZfam, message=FALSE, warning=FALSE}
+
+#variance of components 
+frac_var <- function(x) x^2/sum(x^2)
+
+vsd_fam_pca <- prcomp(vsd_fam_counts)
+
+vsd_fam_pca$sdev %>% 
+  as_tibble() %>% 
+  frac_var() %>% 
+  mutate(Comp = colnames(vsd_fam_pca$x)) %>% 
+  ggplot(aes(x=Comp, y = value)) + 
+  geom_bar(stat = "identity", fill = "#4DC5F9") +
+  geom_hline(yintercept = 0.03, linetype=2) +
+  xlab("Principal Components") +
+  scale_y_continuous(name = "Variance Explained", breaks = seq(0,0.8,0.1), 
+                     labels =   percent_format(accuracy = 5L)) +
+  theme_classic(base_size = 14)
+
+vsd_fam_dframe <- vsd_fam_pca$x %>%
+  as.data.frame() %>%
+  rownames_to_column(var = "sample_ID") %>%
+  full_join(metafile_pca, by = "sample_ID")
+
+vsd_fam_dframe$treatment <- factor(vsd_fam_dframe$treatment,
+                                        levels = c("C", "R", "RC"),
+                                        labels = c("Control", "Roof", "Roof-Control"))
+
+vsd_fam_dframe$country <- factor(vsd_fam_dframe$country,
+                                      levels = c("SE", "DE", "ES"),
+                                      labels = c("Sweden", "Germany", "Spain"))
+#preselection for envfit 
+sampledata_env <- sampledata_remove[,-c(8,11,13,14,16,17,18,19,20,23,25)]
+
+envfit_pca_EZfam_all <- gg_envfit(vsd_fam_pca, sampledata_env, perm = 9999, scaling=1, plot=F)
+envfit_pca_EZfam_all$df_arrows
+
+pcaEZfam_overall <- ggplot(vsd_fam_dframe, aes(x=PC1, y=PC2, color = country)) +
+  geom_point(size = 4,alpha=0.8) +
+  geom_vline(xintercept = 0, linetype=2) +
+  geom_hline(yintercept = 0, linetype=2) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank()) + labs(colour = "Country") + 
+  scale_color_manual(values = c("#46ACC8", "#9C964A", "#B6854D"))
+
+pcaEZfam_overall_env <- pcaEZfam_overall + geom_segment(data = envfit_pca_EZfam_all$df_arrows,
+               aes(x = 0, xend = x, y = 0, yend = y), color = "black",
+               arrow = arrow(length = unit(0.2,"cm"))) +
+               geom_text(data = envfit_pca_EZfam_all$df_arrows,  
+               aes(x = x, y = y, label = var), color = "black",
+               size = 4, 
+               hjust = -0.1) + xlab("PC1 (46.64%)") + ylab("PC2 (10.52%)")
+
+print(pcaEZfam_overall_env)
+
+#ggsave("/Users/Katja/Box Sync/PhD Lund Katja/Sequencing/Functional_genes/Diamond/data_TDB/relaxed/results/pca_env_TDB_EZfam.jpeg", width = 30, height = 15, units = "cm")
+
+```
+
+### Batch correction on countries EZfam
+
+```{r batch correction country EZfam, message=FALSE, warning=FALSE}
+
+vsd_fam_remCOUNTRY <- vsd_fam
+assay(vsd_fam_remCOUNTRY) <- limma::removeBatchEffect(assay(vsd_fam_remCOUNTRY), vsd_fam_remCOUNTRY$country)
+
+p1_EZfam_country_corr <- plotPCA(vsd_fam_remCOUNTRY, "country")
+p2_EZfam_treat_corr <- plotPCA(vsd_fam_remCOUNTRY, "treatment")
+plot_grid(p1_EZfam_country_corr, p2_EZfam_treat_corr)
+
+vsd_fam_remCOUNTRY_df <- as.data.frame(assay(vsd_fam_remCOUNTRY))
+vsd_fam_remCOUNTRY_df <- t(vsd_fam_remCOUNTRY_df)
+
+set.seed(4364)
+adonis2(vsd_fam_remCOUNTRY_df ~ treatment, 
+                     data=metafile_remove, strata=metafile_remove$plot, permutations=999) 
+
+``` 
+***No drought effect on overall functional composition EZfam after batch correction***
+
+# PCA overall TDB EZacc
++ using counts filterByExpr
++ 2 Spanish samples are excluded
+
+```{r PCA EZacc overall, message=FALSE, warning=FALSE}
+
+dds_acc <- DESeqDataSetFromMatrix(countData = tdb_acc,
+                              colData = metafile_remove,
+                              design= ~ country + treatment)
+
+vsd_acc <- varianceStabilizingTransformation(dds_acc)
+vsd_acc_counts <- assay(vsd_acc)
+
+p1_EZacc_country <- plotPCA(vsd_acc, "country")
+p2_EZfam_treat <- plotPCA(vsd_acc, "treatment")
+plot_grid(p1_EZacc_country, p2_EZfam_treat)
+
+#PERMANOVA
+
+vsd_acc_counts <- t(vsd_acc_counts)
+set.seed(4364)
+adonis2(vsd_acc_counts ~ country*treatment, 
+       data=metafile_remove, strata=metafile_remove$plot, permutations=999)
+
+```
+***EZacc level, country effect***
+
+## Nice PCA EZacc
+
+```{r PCA EZacc, message=FALSE,warning=FALSE}
+
+vsd_acc_pca <- prcomp(vsd_acc_counts)
+
+vsd_acc_pca$sdev %>% 
+  as_tibble() %>% 
+  frac_var() %>% 
+  mutate(Comp = colnames(vsd_acc_pca$x)) %>% 
+  ggplot(aes(x=Comp, y = value)) + 
+  geom_bar(stat = "identity", fill = "#4DC5F9") +
+  geom_hline(yintercept = 0.03, linetype=2) +
+  xlab("Principal Components") +
+  scale_y_continuous(name = "Variance Explained", breaks = seq(0,0.8,0.1), 
+                     labels =   percent_format(accuracy = 5L)) +
+  theme_classic(base_size = 14)
+
+vsd_acc_dframe <- vsd_acc_pca$x %>%
+  as.data.frame() %>%
+  rownames_to_column(var = "sample_ID") %>%
+  full_join(metafile_pca, by = "sample_ID")
+
+vsd_acc_dframe$treatment <- factor(vsd_acc_dframe$treatment,
+                                        levels = c("C", "R", "RC"),
+                                        labels = c("Control", "Roof", "Roof-Control"))
+
+vsd_acc_dframe$country <- factor(vsd_acc_dframe$country,
+                                      levels = c("SE", "DE", "ES"),
+                                      labels = c("Sweden", "Germany", "Spain"))
+
+envfit_pca_EZacc_all <- gg_envfit(vsd_acc_pca, sampledata_env, perm = 9999, scaling=1, plot=F)
+envfit_pca_EZacc_all$df_arrows
+
+pcaEZacc_overall <- ggplot(vsd_acc_dframe, aes(x=PC1, y=PC2, color = country)) +
+  geom_point(size = 4,alpha=0.8) +
+  geom_vline(xintercept = 0, linetype=2) +
+  geom_hline(yintercept = 0, linetype=2) +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), 
+        panel.grid.minor = element_blank()) + labs(colour = "Country") + 
+  scale_color_manual(values = c("#46ACC8", "#9C964A", "#B6854D"))
+
+pcaEZacc_overall_env <- pcaEZacc_overall + geom_segment(data = envfit_pca_EZacc_all$df_arrows,
+               aes(x = 0, xend = x, y = 0, yend = y), color = "black",
+               arrow = arrow(length = unit(0.2,"cm"))) +
+               geom_text(data = envfit_pca_EZacc_all$df_arrows,  
+               aes(x = x, y = y, label = var), color = "black",
+               size = 4, 
+               hjust = -0.1) + xlab("PC1 (30.79%)") + ylab("PC2 (12.47%)")
+
+print(pcaEZacc_overall_env)
+
+#ggsave("/Users/Katja/Box Sync/PhD Lund Katja/Sequencing/Functional_genes/Diamond/data_TDB/relaxed/results/pca_env_TDB_EZacc.jpeg", width = 30, height = 15, units = "cm")
+
+```
+
+### Batch correction on countries EZacc
+
+```{r batch correction country EZacc, message=FALSE,warning=FALSE}
+
+vsd_acc_remCOUNTRY <- vsd_acc
+assay(vsd_acc_remCOUNTRY) <- limma::removeBatchEffect(assay(vsd_acc_remCOUNTRY), vsd_acc_remCOUNTRY$country)
+
+p1_EZacc_country_corr <- plotPCA(vsd_acc_remCOUNTRY, "country")
+p2_EZacc_treat_corr <- plotPCA(vsd_acc_remCOUNTRY, "treatment")
+plot_grid(p1_EZacc_country_corr, p2_EZacc_treat_corr)
+
+vsd_acc_remCOUNTRY_df <- as.data.frame(assay(vsd_acc_remCOUNTRY))
+vsd_acc_remCOUNTRY_df <- t(vsd_acc_remCOUNTRY_df)
+
+#PERMANOVA 
+
+set.seed(4364)
+adonis2(vsd_acc_remCOUNTRY_df ~ treatment, 
+                     data=metafile_remove, strata=metafile_remove$plot, permutations=999) 
+
+``` 
+***No drought effect on overall functional composition EZacc after batch correction***
+
+# Separate countries
+# Sweden 
+
+## EZfam level
+
+```{r SE family level, message=F, warning=F}
+
+se_metadat <- metafile_remove %>%
+  filter(country == "SE")
+
+se_tdb_fam <- tdb_fam[,colnames(tdb_fam) %in% rownames(se_metadat)]
+
+se_dds_fam <- DESeqDataSetFromMatrix(countData = se_tdb_fam,
+                              colData = se_metadat[match(colnames(se_tdb_fam), rownames(se_metadat)), ],
+                              design= ~ field_pair + treatment)
+
+se_vsd_fam <- varianceStabilizingTransformation(se_dds_fam)
+se_vsd_fam_counts <- assay(se_vsd_fam)
+
+p1_SE_FP <- plotPCA(se_vsd_fam, "field_pair")
+p2_SE_treat <- plotPCA(se_vsd_fam, "treatment")
+plot_grid(p1_SE_FP, p2_SE_treat)
+
+#PERMANOVA
+se_vsd_fam_counts <- t(se_vsd_fam_counts)
+set.seed(4364)
+adonis2(se_vsd_fam_counts~ treatment, 
+       data=se_metadat, strata=se_metadat$field_pair, permutations=999)
+
+```
+***No drought effect on family level***
+
+### batch correction 
+
+```{r SE batch correction, family level, message=F, warning=F}
+
+se_vsd_fam_remFP <- se_vsd_fam
+assay(se_vsd_fam_remFP) <- limma::removeBatchEffect(assay(se_vsd_fam_remFP), se_vsd_fam_remFP$field_pair)
+
+p1_SE_FP_corr <- plotPCA(se_vsd_fam_remFP, "field_pair")
+p2_SE_treat_corr <- plotPCA(se_vsd_fam_remFP, "treatment")
+plot_grid(p1_SE_FP_corr, p2_SE_treat_corr)
+
+#PERMANOVA 
+se_vsd_fam_remFP_df <- as.data.frame(assay(se_vsd_fam_remFP))
+se_vsd_fam_remFP_df <- t(se_vsd_fam_remFP_df)
+
+set.seed(4364)
+adonis2(se_vsd_fam_remFP_df ~ treatment, 
+                     data=se_metadat, permutations=999)
+
+```
+***No drought effect on family level after batch correction on field pairs***
+
+## EZ ID level
+
+```{r SE ID level, message=F, warning=F}
+
+se_tdb_acc <- tdb_acc[,colnames(tdb_acc) %in% rownames(se_metadat)]
+
+se_dds_acc <- DESeqDataSetFromMatrix(countData = se_tdb_acc,
+                              colData = se_metadat[match(colnames(se_tdb_acc), rownames(se_metadat)), ],
+                              design= ~ field_pair + treatment)
+
+se_vsd_acc <- varianceStabilizingTransformation(se_dds_acc)
+se_vsd_acc_counts <- assay(se_vsd_acc)
+
+p1_SEacc_FP <- plotPCA(se_vsd_acc, "field_pair")
+p2_SEacc_treat <- plotPCA(se_vsd_acc, "treatment")
+plot_grid(p1_SEacc_FP, p2_SEacc_treat)
+
+#PERMANOVA
+se_vsd_acc_counts <- t(se_vsd_acc_counts)
+set.seed(4364)
+adonis2(se_vsd_acc_counts ~ treatment, 
+       data=se_metadat, strata=se_metadat$field_pair, permutations=999)
+
+```
+***No drought effect on ID level***
+
+### batch correction 
+
+```{r SE batch correction, ID level, message=F, warning=F}
+
+se_vsd_acc_remFP <- se_vsd_acc
+assay(se_vsd_acc_remFP) <- limma::removeBatchEffect(assay(se_vsd_acc_remFP), se_vsd_acc_remFP$field_pair)
+
+p1_SEacc_FP_corr <- plotPCA(se_vsd_acc_remFP, "field_pair")
+p2_SEacc_treat_corr <- plotPCA(se_vsd_acc_remFP, "treatment")
+plot_grid(p1_SEacc_FP_corr, p2_SEacc_treat_corr)
+
+#PERMANOVA 
+se_vsd_acc_remFP_df <- as.data.frame(assay(se_vsd_acc_remFP))
+se_vsd_acc_remFP_df <- t(se_vsd_acc_remFP_df)
+
+set.seed(4364)
+adonis2(se_vsd_acc_remFP_df ~ treatment, 
+                     data=se_metadat, permutations=999)
+
+```
+***No drought effect on ID level after batch correction***
+
+# Germany
+
+## EZfam level
+
+```{r DE family level, message=F, warning=F}
+
+de_metadat <- metafile_remove %>%
+  filter(country == "DE")
+
+de_tdb_fam <- tdb_fam[,colnames(tdb_fam) %in% rownames(de_metadat)]
+
+de_dds_fam <- DESeqDataSetFromMatrix(countData = de_tdb_fam,
+                              colData = de_metadat[match(colnames(de_tdb_fam), rownames(de_metadat)), ],
+                              design= ~ field_pair + treatment)
+
+de_vsd_fam <- varianceStabilizingTransformation(de_dds_fam)
+de_vsd_fam_counts <- assay(de_vsd_fam)
+
+p1_DE_FP <- plotPCA(de_vsd_fam, "field_pair")
+p2_DE_treat <- plotPCA(de_vsd_fam, "treatment")
+plot_grid(p1_DE_FP, p2_DE_treat)
+
+#PERMANOVA
+de_vsd_fam_counts <- t(de_vsd_fam_counts)
+set.seed(4364)
+adonis2(de_vsd_fam_counts~ treatment, 
+       data=de_metadat, strata=de_metadat$field_pair, permutations=999)
+
+```
+***No drought effect on family level***
+
+### batch correction 
+
+```{r DE batch correction, family level, message=F, warning=F}
+
+de_vsd_fam_remFP <- de_vsd_fam
+assay(de_vsd_fam_remFP) <- limma::removeBatchEffect(assay(de_vsd_fam_remFP), de_vsd_fam_remFP$field_pair)
+
+p1_DE_FP_corr <- plotPCA(de_vsd_fam_remFP, "field_pair")
+p2_DE_treat_corr <- plotPCA(de_vsd_fam_remFP, "treatment")
+plot_grid(p1_DE_FP_corr, p2_DE_treat_corr)
+
+#PERMANOVA 
+de_vsd_fam_remFP_df <- as.data.frame(assay(de_vsd_fam_remFP))
+de_vsd_fam_remFP_df <- t(de_vsd_fam_remFP_df)
+
+set.seed(4364)
+adonis2(de_vsd_fam_remFP_df ~ treatment, 
+                     data=de_metadat, permutations=999)
+
+```
+***Slight drought effect on family level after batch correction***
+
+## EZ ID level
+
+```{r DE ID level, message=F, warning=F}
+
+de_tdb_acc <- tdb_acc[,colnames(tdb_acc) %in% rownames(de_metadat)]
+
+de_dds_acc <- DESeqDataSetFromMatrix(countData = de_tdb_acc,
+                              colData = de_metadat[match(colnames(de_tdb_acc), rownames(de_metadat)), ],
+                              design= ~ field_pair + treatment)
+
+de_vsd_acc <- varianceStabilizingTransformation(de_dds_acc)
+de_vsd_acc_counts <- assay(de_vsd_acc)
+
+p1_DEacc_FP <- plotPCA(de_vsd_acc, "field_pair")
+p2_DEacc_treat <- plotPCA(de_vsd_acc, "treatment")
+plot_grid(p1_DEacc_FP, p2_DEacc_treat)
+
+#PERMANOVA 
+de_vsd_acc_counts <- t(de_vsd_acc_counts)
+set.seed(4364)
+adonis2(de_vsd_acc_counts ~ treatment, 
+                     data=de_metadat, strata=de_metadat$field_pair, permutations=999)
+
+```
+***No drought effect on ID level***
+
+### batch correction 
+
+```{r DE batch correction, ID level, message=F, warning=F}
+
+de_vsd_acc_remFP <- de_vsd_acc
+assay(de_vsd_acc_remFP) <- limma::removeBatchEffect(assay(de_vsd_acc_remFP), de_vsd_acc_remFP$field_pair)
+
+p1_DEacc_FP_corr <- plotPCA(de_vsd_acc_remFP, "field_pair")
+p2_DEacc_treat_corr <- plotPCA(de_vsd_acc_remFP, "treatment")
+plot_grid(p1_DEacc_FP_corr, p2_DEacc_treat_corr)
+
+#PERMANOVA 
+de_vsd_acc_remFP_df <- as.data.frame(assay(de_vsd_acc_remFP))
+de_vsd_acc_remFP_df <- t(de_vsd_acc_remFP_df)
+
+set.seed(4364)
+adonis2(de_vsd_acc_remFP_df ~ treatment, 
+                     data=de_metadat, permutations=999)
+
+```
+***Slight drought effect on ID level after batch correction***
+
+# Spain
+
+## EZfam level
+
+```{r ES family level, message=F, warning=F}
+
+es_metadat <- metafile_remove %>%
+  filter(country == "ES")
+
+es_tdb_fam <- tdb_fam[,colnames(tdb_fam) %in% rownames(es_metadat)]
+
+es_dds_fam <- DESeqDataSetFromMatrix(countData = es_tdb_fam,
+                              colData = es_metadat[match(colnames(es_tdb_fam), rownames(es_metadat)), ],
+                              design= ~ field_pair + treatment)
+
+es_vsd_fam <- varianceStabilizingTransformation(es_dds_fam)
+es_vsd_fam_counts <- assay(es_vsd_fam)
+
+p1_ES_EP <- plotPCA(es_vsd_fam, "field_pair")
+p2_ES_treat <- plotPCA(es_vsd_fam, "treatment")
+plot_grid(p1_ES_EP, p2_ES_treat)
+
+#PERMANOVA
+es_vsd_fam_counts <- t(es_vsd_fam_counts)
+set.seed(4364)
+adonis2(es_vsd_fam_counts ~ treatment, 
+       data=es_metadat, strata=es_metadat$field_pair, permutations=999)
+
+```
+***No drought on family level***
+
+### batch correction 
+
+```{r ES batch correction, family level, message=F, warning=F}
+
+es_vsd_fam_remFP <- es_vsd_fam
+assay(es_vsd_fam_remFP) <- limma::removeBatchEffect(assay(es_vsd_fam_remFP), es_vsd_fam_remFP$field_pair)
+
+p1_ES_EP_corr <- plotPCA(es_vsd_fam_remFP, "field_pair")
+p2_ES_treat_corr <- plotPCA(es_vsd_fam_remFP, "treatment")
+plot_grid(p1_ES_EP_corr, p2_ES_treat_corr)
+
+#PERMANOVA 
+es_vsd_fam_remFP_df <- as.data.frame(assay(es_vsd_fam_remFP))
+es_vsd_fam_remFP_df <- t(es_vsd_fam_remFP_df)
+
+set.seed(4364)
+adonis2(es_vsd_fam_remFP_df ~ treatment, 
+                     data=es_metadat, permutations=999)
+
+```
+***No drought on family level after batch correction***
+
+## EZ ID level
+
+```{r ES ID level, message=F, warning=F}
+
+es_tdb_acc <- tdb_acc[,colnames(tdb_acc) %in% rownames(es_metadat)]
+
+es_dds_acc <- DESeqDataSetFromMatrix(countData = es_tdb_acc,
+                              colData = es_metadat[match(colnames(es_tdb_acc), rownames(es_metadat)), ],
+                              design= ~ field_pair + treatment)
+
+es_vsd_acc <- varianceStabilizingTransformation(es_dds_acc)
+es_vsd_acc_counts <- assay(es_vsd_acc)
+
+p1_ESacc_EP <- plotPCA(es_vsd_acc, "field_pair")
+p2_ESacc_treat <- plotPCA(es_vsd_acc, "treatment")
+plot_grid(p1_ESacc_EP, p2_ESacc_treat)
+
+#PERMANOVA 
+es_vsd_acc_counts <- t(es_vsd_acc_counts)
+set.seed(4364)
+adonis2(es_vsd_acc_counts ~ treatment, 
+                     data=es_metadat, strata=es_metadat$field_pair, permutations=999)
+
+```
+***No drought effect on ID level***
+
+### batch correction 
+
+```{r ES batch correction, ID level, message=F, warning=F}
+
+es_vsd_acc_remFP <- es_vsd_acc
+assay(es_vsd_acc_remFP) <- limma::removeBatchEffect(assay(es_vsd_acc_remFP), es_vsd_acc_remFP$field_pair)
+
+p1_ESacc_EP_corr <- plotPCA(es_vsd_acc_remFP, "field_pair")
+p2_ESacc_treat_corr <- plotPCA(es_vsd_acc_remFP, "treatment")
+plot_grid(p1_ESacc_EP_corr, p2_ESacc_treat_corr)
+
+#PERMANOVA 
+es_vsd_acc_remFP_df <- as.data.frame(assay(es_vsd_acc_remFP))
+es_vsd_acc_remFP_df <- t(es_vsd_acc_remFP_df)
+
+set.seed(4364)
+adonis2(es_vsd_acc_remFP_df ~ treatment, 
+                     data=es_metadat, permutations=999)
+
+```
+***No drought effect on ID level after batch correction***
+
+```{r session}
+
+sessionInfo()
+
+```
