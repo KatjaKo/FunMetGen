@@ -18,6 +18,3 @@ ggplot(all_comp_fam_abund, aes(x = fct_rev(enzClass), y = logFC, fill = abundant
   theme(legend.title = element_text(size = 12)) + 
   theme(legend.text = element_text(size = 12)) + 
   theme(strip.text.x = element_text(size = 12))
-
-ggsave("/Users/Katja/Box/PhD Lund Katja/Sequencing/Functional_genes/Diamond/data_TDB/relaxed/results/figure_paper/DA_genes_country.jpeg", 
-       width = 20, height = 10, units = "cm")
