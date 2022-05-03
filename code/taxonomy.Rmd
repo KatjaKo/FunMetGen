@@ -1,0 +1,672 @@
+---
+title: "Taxonomy of functional genes from contigtax"
+author: "Katja Kozjek"
+output: 
+rmarkdown::html_document:
+    code_folding: 'hide'
+    toc: true
+    toc_float: true
+    smart: true
+    number_sections: false
+    highlight: tango
+    self_contained: true
+    smaller: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r wrap-hook, include=FALSE}
+library(knitr)
+hook_output = knit_hooks$get('output')
+knit_hooks$set(output = function(x, options) {
+  # this hook is used only when the linewidth option is not NULL
+  if (!is.null(n <- options$linewidth)) {
+    x = knitr:::split_lines(x)
+    # any lines wider than n should be wrapped
+    if (any(nchar(x) > n)) x = strwrap(x, width = n)
+    x = paste(x, collapse = '\n')
+  }
+  hook_output(x, options)
+})
+```
+
+# packages
+
+```{r packages, message=FALSE, warning=FALSE}
+library(tidyr)
+library(tidyverse)
+library(ggordiplots)
+library(pairwiseAdonis)
+library(RVAideMemoire)
+library(phyloseq)
+library(cowplot)
+library(dplyr)
+library(edgeR)
+library(ggrepel)
+```
+
+***Taxonomic composition of functional genes, 2 Spanish samples removed from all analyses***
+
+# upload files
+
+```{r upload files, message=FALSE, warning=FALSE}
+
+#counts
+All_taxa_counts <- read.csv("C:/Users/Katja/Box/PhD Lund Katja/Sequencing/Functional_genes/Diamond/taxonomy_contigtax/rank/All_rank_filt.csv", row.names = 1)
+
+dim(All_taxa_counts) #3399 obs.
+All_taxa_counts <- as.matrix(All_taxa_counts)
+
+#filter counts
+taxa_dgelist <- DGEList(All_taxa_counts)
+sum(taxa_dgelist$counts)
+
+taxa_dgelist <- calcNormFactors(taxa_dgelist,method=c("TMM")) #trimmed mean of M-values
+
+keep.exprs_tax <- filterByExpr(taxa_dgelist)
+All_taxa_counts <- taxa_dgelist[keep.exprs_tax,, keep.lib.sizes=FALSE]
+dim(All_taxa_counts)
+All_taxa_counts <- as.matrix(All_taxa_counts)
+
+#metafile
+metafile_taxa <- read.csv("C:/Users/Katja/Box/PhD Lund Katja/Sequencing/Functional_genes/Diamond/taxonomy_contigtax/metafile_taxa.csv", sep=",", row.names=1)
+metafile_taxa_df <- metafile_taxa
+metafile_taxa = sample_data(metafile_taxa)
+
+#reordering
+all(rownames(metafile_taxa) == colnames(All_taxa_counts))
+
+order_idx_taxa <- match(rownames(metafile_taxa), colnames(All_taxa_counts))
+All_taxa_counts <- All_taxa_counts[,order_idx_taxa]
+all(rownames(metafile_taxa) == colnames(All_taxa_counts))
+
+#taxonomy
+All_taxa <- read.csv("C:/Users/Katja/Box/PhD Lund Katja/Sequencing/Functional_genes/Diamond/taxonomy_contigtax/rank/All_rank_samples.taxa.csv", row.names = 1)
+
+dim(All_taxa)
+All_taxa <- as.matrix(All_taxa)
+
+#create phyloseq object
+taxonomy_otu = otu_table(All_taxa_counts, taxa_are_rows = TRUE)
+taxonomy_taxa = tax_table(All_taxa)
+
+#counts
+physeq_taxonomy <- phyloseq(taxonomy_otu, taxonomy_taxa, metafile_taxa)
+sum(otu_table(physeq_taxonomy))
+
+#relative abundance
+physeq_taxonomy_relab <- transform_sample_counts(physeq_taxonomy, function (x) x/sum(x))
+
+#saveRDS(physeq_taxonomy, "C:/Users/Katja/Box Sync/PhD Lund Katja/Sequencing/Functional_genes/Diamond/taxonomy_contigtax/rds/physeq_taxonomy.rds")
+
+#saveRDS(physeq_taxonomy_relab, "C:/Users/Katja/Box Sync/PhD Lund Katja/Sequencing/Functional_genes/Diamond/taxonomy_contigtax/rds/physeq_taxonomy_relab.rds")
+
+```
+
+# upload phyloseq obj
+
+```{r phyloseq upload, message=FALSE, warning=FALSE}
+
+physeq_taxonomy <- readRDS("C:/Users/Katja/Box/PhD Lund Katja/Sequencing/Functional_genes/Diamond/taxonomy_contigtax/rds/physeq_taxonomy.rds")
+
+physeq_taxonomy_relab <- readRDS("C:/Users/Katja/Box/PhD Lund Katja/Sequencing/Functional_genes/Diamond/taxonomy_contigtax/rds/physeq_taxonomy_relab.rds")
+
+```
+
+## PCoA
++ based on the dissimilarity
+
+```{r PCoA taxa, message=FALSE, warning=FALSE}
+
+pcoa_tax <- ordinate(physeq_taxonomy_relab, "PCoA","bray")
+
+plot_tax <- plot_ordination(physeq_taxonomy_relab, pcoa_tax, type="samples", color="country")
+print(plot_tax)
+
+#all envfit results
+envfit(pcoa_tax$vectors, env=metafile_taxa, permutations=999)
+
+#envfit
+metafile_taxa_env <- metafile_taxa[,-c(8,11,13,14,16,17,18,19,20,21,23,25)]
+
+#selected variables for envfit
+envfit(pcoa_tax$vectors, env=metafile_taxa_env, permutations=999)
+
+#plot envfit
+env.fit_taxa <- gg_envfit(pcoa_tax$vectors, metafile_taxa_env, perm = 999, scaling = 1, plot = FALSE)
+merg.data_taxa <- merge(pcoa_tax$vectors, metafile_taxa_env, by=0) 
+
+merg.data_taxa$country <- factor(merg.data_taxa$country,
+                                      levels = c("SE", "DE", "ES"),
+                                      labels = c("Sweden", "Germany", "Spain"))
+
+merg.data_taxa$treatment <- factor(merg.data_taxa$treatment,
+                                      levels = c("C", "RC", "R"))
+
+pcoa_tax  <- ggplot(merg.data_taxa, aes(x=Axis.1, y=Axis.2, color=country)) + scale_color_manual(values = c("#46ACC8", "#9C964A", "#79402E")) + xlab("PCoA1 (61.8%)") + ylab("PCoA2 (13.2%)") + labs(colour="Climatic region", shape="Drought treatment") + theme_bw() + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) + geom_vline(xintercept = 0, linetype=2) + geom_point(aes(shape=treatment), size = 4,alpha=0.8) + scale_shape_manual(values = c(16,15,17)) +
+geom_hline(yintercept = 0, linetype=2) + theme(axis.text = element_text(size = 12)) + 
+  theme(axis.title = element_text(size = 12)) +
+  theme(legend.title = element_text(size = 12)) + 
+  theme(legend.text = element_text(size = 12))
+
+print(pcoa_tax)
+ggsave("/Users/Katja/Box/PhD Lund Katja/Sequencing/Functional_genes/Diamond/data_TDB/relaxed/results/figure_paper/pcoa_taxa.jpeg", width = 20, height = 15, units = "cm")
+
+pcoa_tax + geom_segment(data = env.fit_taxa$df_arrows,
+               aes(x = 0, xend = x, y = 0, yend = y), color = "black",
+               arrow = arrow(length = unit(0.2,"cm"))) +
+               geom_text_repel(data = env.fit_taxa$df_arrows,  
+               aes(x = x, y = y, label = var), color = "black",
+               size = 4, 
+               hjust = -0.1) 
+
+ggsave("/Users/Katja/Box/PhD Lund Katja/Sequencing/Functional_genes/Diamond/data_TDB/relaxed/results/figure_paper/pcoa_taxa_env.jpeg", width = 20, height = 15, units = "cm")
+
+```
+
+## PERMANOVA overall
+
+```{r permanova overall taxa, message=FALSE, warning=FALSE}
+
+bray_taxa <- phyloseq::distance(physeq_taxonomy_relab, method = "bray")
+meta.bray_taxa <- as(sample_data(physeq_taxonomy_relab), "data.frame")
+
+set.seed(5392)
+permanova_tax <- adonis(bray_taxa ~ country*treatment, 
+                   data=meta.bray_taxa, permutations=999)
+permanova_tax
+write.csv(permanova_tax$aov.tab, "/Users/Katja/Box/PhD Lund Katja/Sequencing/Functional_genes/Diamond/data_TDB/relaxed/results/perm_taxa_site.csv")
+
+pairwise_tax <- pairwise.adonis2(bray_taxa~country,data=meta.bray_taxa, p.adjust.m = "bonferroni")
+
+write.csv(pairwise_tax$DE_vs_ES,"/Users/Katja/Box/PhD Lund Katja/Sequencing/Functional_genes/Diamond/data_TDB/relaxed/results/posthoc_tax_DEvsES.csv")
+
+write.csv(pairwise_tax$DE_vs_SE, "/Users/Katja/Box/PhD Lund Katja/Sequencing/Functional_genes/Diamond/data_TDB/relaxed/results/posthoc_tax_DEvsSE.csv")
+
+write.csv(pairwise_tax$ES_vs_SE, "/Users/Katja/Box/PhD Lund Katja/Sequencing/Functional_genes/Diamond/data_TDB/relaxed/results/posthoc_tax_ESvsSE.csv")
+
+```
+***Country effect, no treatment effect***
+
+### batch correction
+
+```{r batch correction taxa, warning=FALSE,message=FALSE}
+
+taxa_deseq <- DESeqDataSetFromMatrix(countData = All_taxa_counts,
+                              colData = metafile_taxa,
+                              design= ~ country + treatment)
+
+taxa_deseq_vst <- varianceStabilizingTransformation(taxa_deseq)
+taxa_deseq_vst_counts <- assay(taxa_deseq_vst)
+
+p1_taxa_country <- plotPCA(taxa_deseq_vst, "country")
+p2_taxa_treat <- plotPCA(taxa_deseq_vst, "treatment")
+plot_grid(p1_taxa_country, p2_taxa_treat)
+
+taxa_deseq_remCOUNTRY <- taxa_deseq_vst
+assay(taxa_deseq_remCOUNTRY) <- limma::removeBatchEffect(assay(taxa_deseq_remCOUNTRY), taxa_deseq_remCOUNTRY$country)
+
+p1_taxa_country_corr <- plotPCA(taxa_deseq_remCOUNTRY, "country")
+p2_taxa_treat_corr <- plotPCA(taxa_deseq_remCOUNTRY, "treatment")
+plot_grid(p1_taxa_country_corr, p2_taxa_treat_corr)
+
+#PERMANOVA 
+taxa_remCOUNTRY_df <- as.data.frame(assay(taxa_deseq_remCOUNTRY))
+taxa_remCOUNTRY_df <- t(taxa_remCOUNTRY_df)
+
+set.seed(4364)
+adonis(taxa_remCOUNTRY_df ~ treatment, 
+                     data=metafile_taxa_df, permutations=999)
+
+```
+***No drought effect also when accounting for batch correction***
+
+# kingdom level
+
+```{r taxonomy kingdom, message=FALSE, warning=FALSE}
+
+rank_names(physeq_taxonomy)
+table(tax_table(physeq_taxonomy) [,"Kingdom"]) #5
+sum(otu_table(physeq_taxonomy))
+
+#filter at Kingdom level 
+kingdom_filt <- physeq_taxonomy %>%
+  tax_glom(taxrank = "Kingdom") %>%                    # agglomerate at kingdom level
+  transform_sample_counts(function(x) {x/sum(x)} ) %>% # Transform to rel. abundance
+  psmelt() %>%                                         # Melt to long format
+  filter(Abundance > 0.01) %>%                         # Filter out low abundance taxa
+  arrange(Kingdom)                                     # Sort data frame alphabetically by kingdom
+
+# change the order of variable levels with factor()
+kingdom_filt$treatment <- factor(kingdom_filt$treatment, levels = c("R", "RC", "C"))
+
+ggplot(kingdom_filt) + geom_col(mapping = aes(x = treatment, y = Abundance, fill = Kingdom), position = "fill", show.legend = TRUE) + facet_wrap(~country) + scale_fill_manual(values =                                           c("#CEAB07","#35274A","#46ACC8")) + xlab("Drought treatment") + ylab("Relative abundance (Kingdom > 1%)")
+
+
+```
+***All unclassified.others and Archaea are abundant in < 1%***
+
+# filter kingdoms
+
+```{r filter kingdoms, message=FALSE, warning=FALSE}
+
+taxa_Bacteria <- subset_taxa(physeq_taxonomy, !Kingdom %in% c ("Unclassified", "Unclassified.others", "Archaea","Eukaryota"))
+sum(otu_table(taxa_Bacteria))/sum(otu_table(physeq_taxonomy))
+
+#transform to relative abundance
+taxa_Bacteria_relab <- transform_sample_counts(taxa_Bacteria, function (x) x/sum(x))
+
+taxa_Eukaryota <- subset_taxa(physeq_taxonomy, !Kingdom %in% c ("Unclassified", "Unclassified.others", "Archaea","Bacteria"))
+sum(otu_table(taxa_Eukaryota))/sum(otu_table(physeq_taxonomy))
+
+#transform to relative abundance
+taxa_Eukaryota_relab <- transform_sample_counts(taxa_Eukaryota, function (x) x/sum(x))
+
+taxa_Unclassified <- subset_taxa(physeq_taxonomy, !Kingdom %in% c ("Eukaryota", "Unclassified.others", "Archaea","Bacteria"))
+sum(otu_table(taxa_Unclassified))/sum(otu_table(physeq_taxonomy))
+
+#transform to relative abundance
+taxa_Unclassified_relab <- transform_sample_counts(taxa_Unclassified, function (x) x/sum(x))
+
+```
+***I keep Bacteria, Eukaryota and Unclassified***
+
+# bacteria
+## bacteria phylum
+
+```{r bacteria phylum, message=FALSE, warning=FALSE}
+
+#agglomerate on phylum level 
+length(get_taxa_unique(taxa_Bacteria, taxonomic.rank = "Phylum"))
+#28
+
+# melt to long format (for ggploting) 
+# convert into dataframe
+# prune out phyla below 1% in each sample, we keep phyla that contribute more than 1% of the relative abundance of each sample
+
+bacteria_phylum <- taxa_Bacteria %>%
+  tax_glom(taxrank = "Phylum") %>%                     # agglomerate at phylum level
+  transform_sample_counts(function(x) {x/sum(x)} ) %>% # Transform to rel. abundance
+  psmelt() %>%                                         # Melt to long format
+  filter(Abundance > 0.01) %>%                         # Filter out low abundance taxa
+  arrange(Phylum)                                      # Sort data frame alphabetically by phylum
+
+bacteria_phylum$treatment <- factor(bacteria_phylum$treatment, levels = c("C", "RC", "R"))
+bacteria_phylum$country <- factor(bacteria_phylum$country, levels = c("SE", "DE", "ES"), labels = c("Sweden", "Germany", "Spain"))
+
+# Set colors for plotting
+colors <- c("#46ACC8", "#CEAB07", "#35274A", "#79402E", "#FD6467","#02401B", "#9986A5", "#EAD3BF")
+            
+p_bact_phylum <- ggplot(bacteria_phylum) + geom_col(mapping = aes(x = treatment, y = Abundance, fill = Phylum), position = "fill", show.legend = TRUE) + facet_wrap(~country) + scale_fill_manual(values = colors) + xlab("Drought treatment") + ylab("Relative abundance (Phyla > 1%)") + theme_bw() + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_blank(), axis.line = element_line(colour = "black")) + theme(axis.text = element_text(size = 12)) + 
+  theme(axis.title = element_text(size = 12)) +
+  theme(legend.title = element_text(size = 12)) + 
+  theme(legend.text = element_text(size = 12)) + 
+  theme(strip.text.x = element_text(size = 12))
+
+print(p_bact_phylum)
+ggsave("/Users/Katja/Box/PhD Lund Katja/Sequencing/Functional_genes/Diamond/data_TDB/relaxed/results/figure_paper/p_bact_phylum.jpeg", width = 20, height = 10, units = "cm")
+
+```
+
+## bacteria genus
+
+```{r bacteria genus, message=FALSE, warning=FALSE}
+
+## agglomerate on genus level 
+length(get_taxa_unique(taxa_Bacteria, taxonomic.rank = "Genus"))
+#330
+
+# melt to long format (for ggploting) 
+# prune out genus below 5% in each sample, we keep genus that contribute more than 1% of the relative abundance of each sample
+
+bacteria_genus <- taxa_Bacteria %>%
+  tax_glom(taxrank = "Genus") %>%                     # agglomerate at genus level
+  transform_sample_counts(function(x) {x/sum(x)} ) %>% # Transform to rel. abundance
+  psmelt() %>%                                         # Melt to long format
+  filter(Abundance > 0.01) %>%                         # Filter out low abundance taxa
+  arrange(Genus)                                      # Sort data frame alphabetically by genus
+
+bacteria_genus$treatment <- factor(bacteria_genus$treatment, levels = c("R", "RC", "C"))
+bacteria_genus$country <- factor(bacteria_genus$country, levels = c("DE", "ES", "SE"), labels = c("Germany", "Spain", "Sweden"))
+
+p_bact_genus <- ggplot(bacteria_genus) + geom_col(mapping = aes(x = treatment, y = Abundance, fill = Genus), position = "fill", show.legend = TRUE) + facet_wrap(~country) + xlab("Drought treatment") + ylab("Relative abundance (Genus > 1%)")
+
+print(p_bact_genus)
+
+#ggsave("/Users/Katja/Box Sync/PhD Lund Katja/Sequencing/Functional_genes/Diamond/data_TDB/relaxed/results/p_bact_genus.jpeg", width = 30, height = 15, units = "cm")
+
+```
+
+## top genus bacteria
+
+```{r top genus Bact, message=FALSE, warning=FALSE}
+ 
+TopNOTUs = names(sort(taxa_sums(taxa_Bacteria_relab), TRUE)[1:20])
+ps_20 <- prune_taxa(TopNOTUs, taxa_Bacteria_relab)
+
+TopBact_genus <- ps_20 %>%
+  tax_glom(taxrank = "Genus") %>%                     # agglomerate at genus level
+  #transform_sample_counts(function(x) {x/sum(x)} ) %>% # Transform to rel. abundance
+  psmelt() %>%                                         # Melt to long format
+  arrange(Genus)
+
+TopBact_genus$treatment <- factor(TopBact_genus$treatment, levels = c("R", "RC", "C"))
+TopBact_genus$country <- factor(TopBact_genus$country, levels = c("DE", "ES", "SE"), labels = c("Germany", "Spain", "Sweden"))
+
+p_TopBact <- ggplot(TopBact_genus) + geom_col(mapping = aes(x = treatment, y = Abundance, fill = Genus), position = "fill", show.legend = TRUE) + facet_wrap(~country) + xlab("Drought treatment") + ylab("Relative abundance (Genus > 1%)") + scale_fill_manual(values = colors)
+
+plot_grid(p_TopBact)
+
+```
+***Here top 20***
+
+# alpha diversity 
+
+```{r alpha diversity, message=FALSE, warning=FALSE}
+
+#how many different species detected in the system
+
+#all 
+taxa_richness <- estimate_richness(physeq_taxonomy)
+plot_richness(physeq_taxonomy, x="country", color="treatment", measures=c("Observed", "Shannon")) + geom_boxplot() + stat_boxplot(geom = "errorbar") + labs(color="Drought treatment")
+
+#only bacteria
+taxa_richness_Bacteria <- estimate_richness(taxa_Bacteria)
+
+plot_richness(taxa_Bacteria, x="country", color="treatment", measures=c("Observed", "Shannon")) + geom_boxplot() + stat_boxplot(geom = "errorbar") + labs(color="Drought treatment")
+
+```
+
+# link function to taxonomy
+## prepare data
+
+```{r prep data fun-tax, message=FALSE, warning=FALSE}
+
+fun_tax <- read.table("C:/Users/Katja/OneDrive - Lund University/Skrivbordet/FunctionalGenes/Enzfam_tax_count_new.tsv", sep = "\t", header = T)
+dim(fun_tax) #25290 98
+
+colnames(fun_tax) <- c("FuncID", "Kingdom", "Phylum", "Class", "Order", "Family", "Genus", "Species", "DE10_T2","DE11_T2","DE12_T2","DE13_T2","DE14_T2","DE15_T2","DE16_T2","DE17_T2","DE18_T2","DE19_T2","DE1_T2","DE20_T2","DE21_T2","DE22_T2","DE23_T2","DE24_T2","DE25_T2","DE26_T2","DE27_T2","DE28_T2","DE29_T2","DE2_T2", "DE30_T2", "DE3_T2" ,"DE4_T2" ,"DE5_T2" ,"DE6_T2" ,"DE7_T2" ,"DE8_T2" ,"DE9_T2","ES10_T2","ES11_T2","ES12_T2","ES13_T2", "ES14_T2","ES15_T2","ES16_T2","ES17_T2","ES18_T2","ES19_T2", "ES1_T2", "ES20_T2","ES21_T2","ES22_T2","ES23_T2","ES24_T2", "ES25_T2","ES26_T2","ES27_T2","ES28_T2","ES29_T2", "ES2_T2", "ES30_T2", "ES3_T2" ,"ES4_T2","ES5_T2","ES6_T2", "ES7_T2","ES8_T2","ES9_T2", "SE10_T2","SE11_T2","SE12_T2","SE13_T2","SE14_T2","SE15_T2","SE16_T2","SE17_T2","SE18_T2","SE19_T2", "SE1_T2", "SE20_T2","SE21_T2","SE22_T2","SE23_T2","SE24_T2","SE25_T2","SE26_T2","SE27_T2","SE28_T2","SE29_T2","SE2_T2", "SE30_T2", "SE3_T2","SE4_T2","SE5_T2","SE6_T2","SE7_T2", "SE8_T2","SE9_T2") 
+
+fun_tax <- fun_tax[,-c(58,61)] #remove 2 Spanish samples
+
+colSums(fun_tax[,9:96])
+
+#rename colnames for samples
+
+fun_samples <- fun_tax[,-c(1:8)]
+
+all(rownames(metafile_taxa) == colnames(fun_samples))
+
+fun_samples_ord <- match(rownames(metafile_taxa), colnames(fun_samples))
+fun_samples_ord1 <- fun_samples[,fun_samples_ord]
+all(rownames(metafile_taxa) == colnames(fun_samples_ord1))
+
+fun_samples <- fun_samples_ord1
+dim(fun_samples)
+colnames(fun_samples)
+
+taxa_ass <- fun_tax[,1:8] #only ID and taxa assignment 
+
+#relative abundance of counts
+fun_samples_rel <- apply(fun_samples,2,function(x){x/sum(x)})
+
+fun_taxa_new <- cbind(taxa_ass, fun_samples_rel)
+
+#convert to long format 
+
+keycol <- "sampleID"
+valuecol <- "rel_abund"
+gathercols <- c("DE1_T2","DE2_T2" ,"DE3_T2" ,"DE4_T2" ,"DE5_T2" ,"DE6_T2" ,"DE7_T2" ,"DE8_T2" ,"DE9_T2" 
+,"DE10_T2" ,"DE11_T2" ,"DE12_T2" ,"DE13_T2" ,"DE14_T2" ,"DE15_T2" ,"DE16_T2" ,"DE17_T2","DE18_T2"
+,"DE19_T2" ,"DE20_T2" ,"DE21_T2" ,"DE22_T2", "DE23_T2" ,"DE24_T2" ,"DE25_T2" ,"DE26_T2" ,"DE27_T2"
+, "DE28_T2" ,"DE29_T2" ,"DE30_T2" ,"ES1_T2" , "ES2_T2"  ,"ES3_T2"  ,"ES4_T2"  ,"ES5_T2"  ,"ES6_T2" 
+,"ES7_T2"  ,"ES8_T2"  ,"ES9_T2" , "ES10_T2" ,"ES11_T2" ,"ES12_T2" ,"ES13_T2" ,"ES14_T2" ,"ES15_T2","ES16_T2", "ES17_T2" ,"ES18_T2" ,"ES19_T2" ,"ES20_T2" ,"ES21_T2" ,"ES22_T2" ,"ES23_T2" ,"ES24_T2"
+,"ES25_T2" ,"ES26_T2" ,"ES27_T2" ,"ES29_T2" ,"SE1_T2"  ,"SE2_T2"  ,"SE3_T2" 
+,"SE4_T2"  ,"SE5_T2"  ,"SE6_T2"  ,"SE7_T2"  ,"SE8_T2"  ,"SE9_T2" , "SE10_T2" ,"SE11_T2" ,"SE12_T2"
+,"SE13_T2" ,"SE14_T2" ,"SE15_T2", "SE16_T2" ,"SE17_T2" ,"SE18_T2" ,"SE19_T2" ,"SE20_T2" ,"SE21_T2"
+,"SE22_T2" ,"SE23_T2" ,"SE24_T2" ,"SE25_T2" ,"SE26_T2" ,"SE27_T2","SE28_T2" ,"SE29_T2","SE30_T2")
+
+fun_samples_long <- gather_(fun_taxa_new, keycol, valuecol, gathercols)
+fun_samples_long %>% head(10)
+
+#add country to long format
+countryID <- substring(fun_samples_long$sampleID, 1, 2)
+
+fun_samples_long <- fun_samples_long %>%
+ mutate(fun_samples_long, countryID)
+
+meta_short <- metafile_taxa_df %>%
+  rownames_to_column("sampleID") %>%
+  select(sampleID, field_pair, carbon_intensity, treatment)
+
+colnames(fun_samples_long)
+
+fun_samples_long <- 
+  fun_samples_long %>%
+  left_join(meta_short, by = "sampleID") 
+
+#saveRDS(fun_samples_long, "C:/Users/Katja/Box Sync/PhD Lund Katja/Sequencing/Functional_genes/Diamond/taxonomy_contigtax/rds/taxa_long_format.rds")
+
+se <- function(x) sqrt(var(x)/length(x))
+
+```
+
+## plot
+
+```{r plot fun-tax, message=FALSE, warning=FALSE}
+
+#fun_samples_long <- readRDS("C:/Users/Katja/Box Sync/PhD Lund Katja/Sequencing/Functional_genes/Diamond/taxonomy_contigtax/rds/taxa_long_format.rds")
+
+#group by FuncID
+fun_samples_long %>% 
+ filter(rel_abund > 0.01) %>%
+ group_by(FuncID) %>%
+ summarise(mean_relab=mean(rel_abund)) %>%
+ ggplot(aes(x=FuncID, y=mean_relab)) +
+ geom_col(position = "identity") + 
+ coord_flip()
+
+colors <- c(
+  "#CBD588", "#5F7FC7", "orange","#DA5724", "#508578", "#CD9BCD",
+   "#AD6F3B", "#673770","#D14285", "#652926", "#C84248", 
+  "#8569D5", "#5E738F","#D1A33D", "#8A7C64", "#599861", "#CC79A7", "yellow2", "burlywood1","#35274A","#46ACC8","#DD8D29","#02401B","#9986A5","aquamarine2", "coral3", "blueviolet", "darkgoldenrod2", "brown3", "darkgreen", "seagreen", "orchid3", "salmon", "wheat", "sienna3", "steelblue", "purple3", "plum", "moccasin", "tan", "azure", "gold", "snow", "lightcyan")
+
+#filter based on the relative abundance, genus level
+
+fun_samples_long %>% 
+  filter(rel_abund > 0.01)  %>% #we keep genus that contribute more than 1% of the relative abundance of each sample
+group_by(Genus, FuncID) %>%
+  summarise(mean_relab=mean(rel_abund), se_relab=se(rel_abund)) %>%
+  arrange(desc(mean_relab), .by_group = TRUE) %>%
+  ggplot(aes(x=FuncID, y=mean_relab, fill=Genus)) + 
+  geom_col(position = "identity") + 
+  ylab("Relative abundance") +
+  coord_flip() + scale_fill_manual(values = colors)
+
+#filter based on the relative abundance, family level
+
+fun_samples_long %>%
+  filter(rel_abund > 0.01)  %>% #we keep families that contribute more than 1% of the relative abundance of each 
+group_by(FuncID, Family) %>%
+  summarise(mean_relab=mean(rel_abund), se_relab=se(rel_abund)) %>%
+  arrange(desc(mean_relab), .by_group = TRUE) %>% #to sort the results by decreasing order of mean relative abundance
+  ggplot(aes(x=FuncID, y=mean_relab, fill=Family)) + 
+  geom_col(position = "identity") + 
+  ylab("Relative abundance") +
+  coord_flip() 
+
+```
+
+## genus level
+
+```{r fun-tax genus, message=FALSE, warning=FALSE}
+
+#all Genus
+all_genus <- fun_samples_long %>% 
+   group_by(FuncID,Genus, sampleID,countryID) %>%
+   summarise(sum_counts=sum(rel_abund)) %>%
+   group_by(FuncID, Genus,countryID) %>%
+   summarise(mean_relab=mean(sum_counts))
+
+nrow(all_genus) # 45120
+
+#filter to only get Genus abundance > 1%
+filt_genus <- fun_samples_long %>% 
+   group_by(FuncID,Genus,sampleID,countryID) %>%
+   summarise(sum_counts=sum(rel_abund)) %>%  
+   group_by(FuncID, Genus,countryID) %>%
+   summarise(mean_relab=mean(sum_counts)) %>%
+   group_by(Genus) %>%
+   summarise(sum_counts=sum(mean_relab)) %>%
+   filter(sum_counts>0.01)  #to discard genus below 1% 
+
+nrow(filt_genus) #43
+
+```
+
+### plot genus level
+
+```{r plot fun-taxa genus, warning=FALSE, message=FALSE}
+
+filt_func_genus <- all_genus %>%
+   group_by(FuncID,countryID) %>%
+   summarise(sum_counts=sum(mean_relab)) %>%
+   filter(sum_counts>0.01)
+
+final_genus <- all_genus %>%
+  mutate(Genus = ifelse(Genus %in% filt_genus$Genus, Genus, "Others")) %>%
+  group_by(FuncID, Genus,countryID) %>%
+  summarise(final_counts=sum(mean_relab)) %>%
+  filter(FuncID %in% filt_func_genus$FuncID) 
+
+final_genus$countryID <- factor(final_genus$countryID, levels = c("SE", "DE", "ES"),
+                                      labels = c("Sweden", "Germany", "Spain"))
+
+ggplot(final_genus, aes(x=fct_rev(FuncID), y=final_counts, fill=Genus)) + 
+  geom_col(position = "identity") + xlab("CAZy enzyme family") +
+  ylab("Relative abundance (%)") + coord_flip() + 
+  scale_y_continuous(labels = scales::percent)  + facet_wrap(~countryID) + theme_bw() + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_blank(), axis.line = element_line(colour = "black")) 
+
+#ggsave("/Users/Katja/Box Sync/PhD Lund Katja/Sequencing/Functional_genes/Diamond/data_TDB/relaxed/results/taxa_function.jpeg", width = 20, height = 15, units = "cm")
+
+```
+ 
+### genus DE
+ 
+```{r fun-taxa genus DE, message=FALSE, warning=FALSE}
+
+taxa_fun_DE <- fun_samples_long %>% filter(countryID == "DE")
+
+genus_DE <- taxa_fun_DE %>% 
+    group_by(FuncID,Genus, sampleID, treatment) %>%
+    summarise(sum_counts=sum(rel_abund)) %>%
+    group_by(FuncID, Genus,treatment) %>%
+    summarise(mean_relab=mean(sum_counts))
+nrow(genus_DE)
+
+filt_genus_DE <- taxa_fun_DE %>% 
+   group_by(FuncID,Genus,sampleID,treatment) %>%
+   summarise(sum_counts=sum(rel_abund)) %>%  
+   group_by(FuncID, Genus) %>%
+   summarise(mean_relab=mean(sum_counts)) %>%
+   group_by(Genus) %>%
+   summarise(sum_counts=sum(mean_relab)) %>%
+   filter(sum_counts>0.01)  #to discard genus below 1%
+nrow(filt_genus_DE)
+
+filt_func_genus_DE <- genus_DE %>%
+   group_by(FuncID,treatment) %>%
+   summarise(sum_counts=sum(mean_relab)) %>%
+   filter(sum_counts>0.01)
+
+final_genus_DE <- genus_DE %>%
+  mutate(Genus = ifelse(Genus %in% filt_genus_DE$Genus, Genus, "Others")) %>%
+  group_by(FuncID, Genus, treatment) %>%
+  summarise(final_counts=sum(mean_relab)) %>%
+  filter(FuncID %in% filt_func_genus_DE$FuncID)
+
+colors <- c("#46ACC8", "#CEAB07", "#35274A", "#79402E", "#FD6467","#02401B", "#9986A5","#DD8D29", "#EAD3BF", 
+            "#8D8680","#81A88D", "#899DA4", "#D69C4E", "#F4B5BD", "#AA9486", "#FAEFD1")
+
+final_genus_DE$Genus <- factor(final_genus_DE$Genus, levels = c("Actinoplanes", "Amycolatopsis", "Bradyrhizobium", "Luteitalea", "Micromonospora", "Mycobacterium", "Mycolicibacterium", "Nocardioides", "Pseudomonas", "Streptomyces", "Xanthomonas", "Unclassified.Actinobacteria", "Unclassified.Bacteroidetes", "Unclassified.Proteobacteria", "Unclassified", "Others"))
+
+final_genus_DE$treatment <- factor(final_genus_DE$treatment, levels = c("R", "RC", "C"))
+                                      
+
+ggplot(final_genus_DE, aes(x=fct_rev(FuncID), y=final_counts, fill=Genus)) + 
+  geom_col(position = "identity") + xlab("CAZy enzyme family") +
+  ylab("Relative abundance (%)") + coord_flip() + facet_grid(~treatment) + scale_fill_manual(values=colors) +
+  scale_y_continuous(labels = scales::percent)  + theme_bw() + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_blank(), axis.line = element_line(colour = "black")) 
+
+``` 
+ 
+## phylum level
+
+```{r fun-tax phylum, message=FALSE, warning=FALSE}
+
+#all Phyla
+all_phyla <- fun_samples_long %>% 
+   group_by(FuncID,Phylum, sampleID,countryID) %>%
+   summarise(sum_counts=sum(rel_abund)) %>%
+   group_by(FuncID, Phylum,countryID) %>%
+   summarise(mean_relab=mean(sum_counts)) 
+
+nrow(all_phyla) #7632
+
+#filter to only get Phyla abundance > 1%
+filt_phyla <- fun_samples_long %>% 
+   group_by(FuncID,Phylum,sampleID,countryID) %>%
+   summarise(sum_counts=sum(rel_abund)) %>%  
+   group_by(FuncID, Phylum,countryID) %>%
+   summarise(mean_relab=mean(sum_counts)) %>%
+   group_by(Phylum) %>%
+   summarise(sum_counts=sum(mean_relab)) %>%
+   filter(sum_counts>0.01)  #to discard below 1% 
+
+nrow(filt_phyla) #10
+
+```
+
+### plot phylum level
+
+```{r plot fun-taxa phyla, warning=FALSE, message=FALSE}
+
+filt_func_phyla <- all_phyla %>%
+   group_by(FuncID,countryID) %>%
+   summarise(sum_counts=sum(mean_relab)) %>%
+   filter(sum_counts>0.01)
+
+final_phyla <- all_phyla %>%
+  mutate(Phylum = ifelse(Phylum %in% filt_phyla$Phylum, Phylum, "Others")) %>%
+  group_by(FuncID, Phylum,countryID) %>%
+  summarise(final_counts=sum(mean_relab)) %>%
+  filter(FuncID %in% filt_func_phyla$FuncID)
+
+colors <- c("#46ACC8", "#CEAB07", "#35274A", "#79402E", "#FD6467","#02401B", "#9986A5","#DD8D29", "#EAD3BF", 
+            "#8D8680","#81A88D")
+
+final_phyla$Phylum <- factor(final_phyla$Phylum, levels = c("Acidobacteria", "Actinobacteria", "Bacteroidetes", "Firmicutes", "Gemmatimonadetes", "Planctomycetes", "Proteobacteria", "Streptophyta", "Verrucomicrobia", "Unclassified", "Others"))
+
+final_phyla$countryID <- factor(final_phyla$countryID, levels = c("SE", "DE", "ES"),
+                                      labels = c("Sweden", "Germany", "Spain"))
+
+ggplot(final_phyla, aes(x=fct_rev(FuncID), y=final_counts, fill=Phylum)) + 
+  geom_col(position = "identity") + xlab("CAZy enzyme family") +
+  ylab("Relative abundance (%)") + coord_flip() + scale_fill_manual(values=colors) + 
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1,suffix = "")) + facet_wrap(~countryID) + theme_bw() + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_blank(), axis.line = element_line(colour = "black")) + theme(axis.text = element_text(size = 10)) + 
+  theme(axis.title = element_text(size = 12)) +
+  theme(legend.title = element_text(size = 12)) + 
+  theme(legend.text = element_text(size = 12)) + 
+  theme(strip.text.x = element_text(size = 12))
+
+ggsave("/Users/Katja/Box/PhD Lund Katja/Sequencing/Functional_genes/Diamond/data_TDB/relaxed/results/figure_paper/taxa_function_phylum.jpeg", width = 20, height = 10, units = "cm")
+
+```
+
+```{r session, message=FALSE, warning=FALSE}
+sessionInfo()
+```
+
+
