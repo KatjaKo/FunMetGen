@@ -58,21 +58,19 @@ Analyses related to functional composition. Counts are filtered using a function
 # Upload files
 
 ```{r load files, message=FALSE, warning=FALSE}
+tdb_fam <- read.csv("data/dataTDB/TDB_EZfam/TDB_EZfam_rem_filt.counts.tsv", sep = "\t", header = T, row.names = 1)
 
-tdb_fam <- read.csv("C:/Users/Katja/Box Sync/PhD Lund Katja/Sequencing/Functional_genes/Diamond/data_TDB/relaxed/TDB_EZfam_rem_filt.counts.tsv", sep = "\t", header = T, row.names = 1)
+tdb_acc <- read.csv("data/dataTDB/TDB_EZacc/TDB_EZacc_rem_filt.counts.tsv",sep = "\t", header = T, row.names = 1)
 
-tdb_acc <- read.csv("C:/Users/Katja/Box Sync/PhD Lund Katja/Sequencing/Functional_genes/Diamond/data_TDB/relaxed/TDB_EZacc_rem_filt.counts.tsv",sep = "\t", header = T, row.names = 1)
-
-metafile = read.csv("C:/Users/Katja/Box Sync/PhD Lund Katja/Sequencing/Functional_genes/Diamond/data_TDB/relaxed/metafile_relaxed.csv", sep=",", row.names=1)
+metafile = read.csv("data/metafile/metafile_relaxed.csv", sep=",", row.names=1)
 
 metafile_remove <- metafile[-c(58,60),]
 
-metafile_pca <- read.csv("C:/Users/Katja/Box Sync/PhD Lund Katja/Sequencing/Functional_genes/Diamond/data_TDB/relaxed/metafile_relaxed.csv", sep=",")
+metafile_pca <- read.csv("data/metafile/metafile_relaxed.csv", sep=",")
 metafile_pca <- metafile_pca[-c(58,60),] #for pca dataframe
 
 sampledata = sample_data(metafile)
 sampledata_remove <- sampledata[-c(58,60),]
-
 ```
 
 # PCA overall TDB EZfam
@@ -80,7 +78,6 @@ sampledata_remove <- sampledata[-c(58,60),]
 + 2 Spanish samples are excluded
 
 ```{r PCA EZfam overall, message=FALSE, warning=FALSE}
-
 dds_fam <- DESeqDataSetFromMatrix(countData = tdb_fam,
                               colData = metafile_remove,
                               design= ~ country + treatment)
@@ -98,14 +95,11 @@ vsd_fam_counts <- t(vsd_fam_counts)
 set.seed(4364)
 adonis2(vsd_fam_counts ~ country*treatment, 
        data=metafile_remove, strata=metafile_remove$plot, permutations=999)
-
 ```
-***EZfam level, country effect***
 
 ## Nice PCA EZfam
 
 ```{r PCA EZfam, message=FALSE, warning=FALSE}
-
 #variance of components 
 frac_var <- function(x) x^2/sum(x^2)
 
@@ -159,15 +153,11 @@ pcaEZfam_overall_env <- pcaEZfam_overall + geom_segment(data = envfit_pca_EZfam_
                hjust = -0.1) + xlab("PC1 (46.64%)") + ylab("PC2 (10.52%)")
 
 print(pcaEZfam_overall_env)
-
-#ggsave("/Users/Katja/Box Sync/PhD Lund Katja/Sequencing/Functional_genes/Diamond/data_TDB/relaxed/results/pca_env_TDB_EZfam.jpeg", width = 30, height = 15, units = "cm")
-
 ```
 
 ### Batch correction on countries EZfam
 
 ```{r batch correction country EZfam, message=FALSE, warning=FALSE}
-
 vsd_fam_remCOUNTRY <- vsd_fam
 assay(vsd_fam_remCOUNTRY) <- limma::removeBatchEffect(assay(vsd_fam_remCOUNTRY), vsd_fam_remCOUNTRY$country)
 
@@ -181,16 +171,13 @@ vsd_fam_remCOUNTRY_df <- t(vsd_fam_remCOUNTRY_df)
 set.seed(4364)
 adonis2(vsd_fam_remCOUNTRY_df ~ treatment, 
                      data=metafile_remove, strata=metafile_remove$plot, permutations=999) 
-
 ``` 
-***No drought effect on overall functional composition EZfam after batch correction***
 
 # PCA overall TDB EZacc
 + using counts filterByExpr
 + 2 Spanish samples are excluded
 
 ```{r PCA EZacc overall, message=FALSE, warning=FALSE}
-
 dds_acc <- DESeqDataSetFromMatrix(countData = tdb_acc,
                               colData = metafile_remove,
                               design= ~ country + treatment)
@@ -208,14 +195,11 @@ vsd_acc_counts <- t(vsd_acc_counts)
 set.seed(4364)
 adonis2(vsd_acc_counts ~ country*treatment, 
        data=metafile_remove, strata=metafile_remove$plot, permutations=999)
-
 ```
-***EZacc level, country effect***
 
 ## Nice PCA EZacc
 
 ```{r PCA EZacc, message=FALSE,warning=FALSE}
-
 vsd_acc_pca <- prcomp(vsd_acc_counts)
 
 vsd_acc_pca$sdev %>% 
@@ -264,15 +248,11 @@ pcaEZacc_overall_env <- pcaEZacc_overall + geom_segment(data = envfit_pca_EZacc_
                hjust = -0.1) + xlab("PC1 (30.79%)") + ylab("PC2 (12.47%)")
 
 print(pcaEZacc_overall_env)
-
-#ggsave("/Users/Katja/Box Sync/PhD Lund Katja/Sequencing/Functional_genes/Diamond/data_TDB/relaxed/results/pca_env_TDB_EZacc.jpeg", width = 30, height = 15, units = "cm")
-
 ```
 
 ### Batch correction on countries EZacc
 
 ```{r batch correction country EZacc, message=FALSE,warning=FALSE}
-
 vsd_acc_remCOUNTRY <- vsd_acc
 assay(vsd_acc_remCOUNTRY) <- limma::removeBatchEffect(assay(vsd_acc_remCOUNTRY), vsd_acc_remCOUNTRY$country)
 
@@ -288,9 +268,7 @@ vsd_acc_remCOUNTRY_df <- t(vsd_acc_remCOUNTRY_df)
 set.seed(4364)
 adonis2(vsd_acc_remCOUNTRY_df ~ treatment, 
                      data=metafile_remove, strata=metafile_remove$plot, permutations=999) 
-
 ``` 
-***No drought effect on overall functional composition EZacc after batch correction***
 
 # Separate countries
 # Sweden 
@@ -298,7 +276,6 @@ adonis2(vsd_acc_remCOUNTRY_df ~ treatment,
 ## EZfam level
 
 ```{r SE family level, message=F, warning=F}
-
 se_metadat <- metafile_remove %>%
   filter(country == "SE")
 
@@ -320,14 +297,11 @@ se_vsd_fam_counts <- t(se_vsd_fam_counts)
 set.seed(4364)
 adonis2(se_vsd_fam_counts~ treatment, 
        data=se_metadat, strata=se_metadat$field_pair, permutations=999)
-
 ```
-***No drought effect on family level***
 
 ### batch correction 
 
 ```{r SE batch correction, family level, message=F, warning=F}
-
 se_vsd_fam_remFP <- se_vsd_fam
 assay(se_vsd_fam_remFP) <- limma::removeBatchEffect(assay(se_vsd_fam_remFP), se_vsd_fam_remFP$field_pair)
 
@@ -342,14 +316,11 @@ se_vsd_fam_remFP_df <- t(se_vsd_fam_remFP_df)
 set.seed(4364)
 adonis2(se_vsd_fam_remFP_df ~ treatment, 
                      data=se_metadat, permutations=999)
-
 ```
-***No drought effect on family level after batch correction on field pairs***
 
 ## EZ ID level
 
 ```{r SE ID level, message=F, warning=F}
-
 se_tdb_acc <- tdb_acc[,colnames(tdb_acc) %in% rownames(se_metadat)]
 
 se_dds_acc <- DESeqDataSetFromMatrix(countData = se_tdb_acc,
@@ -368,14 +339,11 @@ se_vsd_acc_counts <- t(se_vsd_acc_counts)
 set.seed(4364)
 adonis2(se_vsd_acc_counts ~ treatment, 
        data=se_metadat, strata=se_metadat$field_pair, permutations=999)
-
 ```
-***No drought effect on ID level***
 
 ### batch correction 
 
 ```{r SE batch correction, ID level, message=F, warning=F}
-
 se_vsd_acc_remFP <- se_vsd_acc
 assay(se_vsd_acc_remFP) <- limma::removeBatchEffect(assay(se_vsd_acc_remFP), se_vsd_acc_remFP$field_pair)
 
@@ -390,16 +358,13 @@ se_vsd_acc_remFP_df <- t(se_vsd_acc_remFP_df)
 set.seed(4364)
 adonis2(se_vsd_acc_remFP_df ~ treatment, 
                      data=se_metadat, permutations=999)
-
 ```
-***No drought effect on ID level after batch correction***
 
 # Germany
 
 ## EZfam level
 
 ```{r DE family level, message=F, warning=F}
-
 de_metadat <- metafile_remove %>%
   filter(country == "DE")
 
@@ -421,14 +386,11 @@ de_vsd_fam_counts <- t(de_vsd_fam_counts)
 set.seed(4364)
 adonis2(de_vsd_fam_counts~ treatment, 
        data=de_metadat, strata=de_metadat$field_pair, permutations=999)
-
 ```
-***No drought effect on family level***
 
 ### batch correction 
 
 ```{r DE batch correction, family level, message=F, warning=F}
-
 de_vsd_fam_remFP <- de_vsd_fam
 assay(de_vsd_fam_remFP) <- limma::removeBatchEffect(assay(de_vsd_fam_remFP), de_vsd_fam_remFP$field_pair)
 
@@ -443,14 +405,11 @@ de_vsd_fam_remFP_df <- t(de_vsd_fam_remFP_df)
 set.seed(4364)
 adonis2(de_vsd_fam_remFP_df ~ treatment, 
                      data=de_metadat, permutations=999)
-
 ```
-***Slight drought effect on family level after batch correction***
 
 ## EZ ID level
 
 ```{r DE ID level, message=F, warning=F}
-
 de_tdb_acc <- tdb_acc[,colnames(tdb_acc) %in% rownames(de_metadat)]
 
 de_dds_acc <- DESeqDataSetFromMatrix(countData = de_tdb_acc,
@@ -469,14 +428,11 @@ de_vsd_acc_counts <- t(de_vsd_acc_counts)
 set.seed(4364)
 adonis2(de_vsd_acc_counts ~ treatment, 
                      data=de_metadat, strata=de_metadat$field_pair, permutations=999)
-
 ```
-***No drought effect on ID level***
 
 ### batch correction 
 
 ```{r DE batch correction, ID level, message=F, warning=F}
-
 de_vsd_acc_remFP <- de_vsd_acc
 assay(de_vsd_acc_remFP) <- limma::removeBatchEffect(assay(de_vsd_acc_remFP), de_vsd_acc_remFP$field_pair)
 
@@ -491,16 +447,13 @@ de_vsd_acc_remFP_df <- t(de_vsd_acc_remFP_df)
 set.seed(4364)
 adonis2(de_vsd_acc_remFP_df ~ treatment, 
                      data=de_metadat, permutations=999)
-
 ```
-***Slight drought effect on ID level after batch correction***
 
 # Spain
 
 ## EZfam level
 
 ```{r ES family level, message=F, warning=F}
-
 es_metadat <- metafile_remove %>%
   filter(country == "ES")
 
@@ -522,14 +475,11 @@ es_vsd_fam_counts <- t(es_vsd_fam_counts)
 set.seed(4364)
 adonis2(es_vsd_fam_counts ~ treatment, 
        data=es_metadat, strata=es_metadat$field_pair, permutations=999)
-
 ```
-***No drought on family level***
 
 ### batch correction 
 
 ```{r ES batch correction, family level, message=F, warning=F}
-
 es_vsd_fam_remFP <- es_vsd_fam
 assay(es_vsd_fam_remFP) <- limma::removeBatchEffect(assay(es_vsd_fam_remFP), es_vsd_fam_remFP$field_pair)
 
@@ -544,14 +494,11 @@ es_vsd_fam_remFP_df <- t(es_vsd_fam_remFP_df)
 set.seed(4364)
 adonis2(es_vsd_fam_remFP_df ~ treatment, 
                      data=es_metadat, permutations=999)
-
 ```
-***No drought on family level after batch correction***
 
 ## EZ ID level
 
 ```{r ES ID level, message=F, warning=F}
-
 es_tdb_acc <- tdb_acc[,colnames(tdb_acc) %in% rownames(es_metadat)]
 
 es_dds_acc <- DESeqDataSetFromMatrix(countData = es_tdb_acc,
@@ -570,14 +517,11 @@ es_vsd_acc_counts <- t(es_vsd_acc_counts)
 set.seed(4364)
 adonis2(es_vsd_acc_counts ~ treatment, 
                      data=es_metadat, strata=es_metadat$field_pair, permutations=999)
-
 ```
-***No drought effect on ID level***
 
 ### batch correction 
 
 ```{r ES batch correction, ID level, message=F, warning=F}
-
 es_vsd_acc_remFP <- es_vsd_acc
 assay(es_vsd_acc_remFP) <- limma::removeBatchEffect(assay(es_vsd_acc_remFP), es_vsd_acc_remFP$field_pair)
 
@@ -592,12 +536,8 @@ es_vsd_acc_remFP_df <- t(es_vsd_acc_remFP_df)
 set.seed(4364)
 adonis2(es_vsd_acc_remFP_df ~ treatment, 
                      data=es_metadat, permutations=999)
-
 ```
-***No drought effect on ID level after batch correction***
 
 ```{r session}
-
 sessionInfo()
-
 ```
