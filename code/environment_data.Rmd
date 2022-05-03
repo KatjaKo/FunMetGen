@@ -35,7 +35,6 @@ knit_hooks$set(output = function(x, options) {
 #load packages 
 
 ```{r setting the environment, message=F, warning=F}
-
 library(car)
 library(lmerTest)
 library(lmtest)
@@ -82,8 +81,7 @@ water_summary$country<-factor(water_summary$country, levels=c("SE", "DE", "ES"),
 p_water <- ggplot(water_summary, aes(treatment, WC)) +
     geom_errorbar(
     aes(ymin = WC-se, ymax = WC+se, color = treatment),
-    position = position_dodge(0.3), width = 0.2
-    ) +
+    position = position_dodge(0.3), width = 0.2) +
     geom_point(aes(color = treatment), position = position_dodge(0.3)) + facet_grid(.~country) + theme_bw() + xlab("Drought treatment") + ylab("Soil water content [%]") + scale_color_manual(values = c("#B6854D", "#8D8680", "#0F0D0E")) + labs(color = "Drought treatment") + theme(axis.text = element_text(size = 10)) + 
   theme(axis.title = element_text(size = 12)) +
   theme(legend.title = element_text(size = 12)) + 
