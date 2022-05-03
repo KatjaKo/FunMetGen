@@ -43,7 +43,9 @@ library(multcomp)
 library(ggplot2)
 library(wesanderson)
 library(emmeans)
-
+library(cowplot)
+library(ggpubr)
+library(effects)
 ```
 
 ***IMPORTANT: drought treatment, and country are taken as factors***
@@ -53,175 +55,71 @@ library(emmeans)
 
 # Water content 
 
-## volumetric water content
+## water content (g water/g soil)
 
-```{r volumetric water content, message=FALSE, warning=FALSE}
-
-water_content <- read.csv("C:/Users/Katja/Box Sync/PhD Lund Katja/Sequencing/Functional_genes/metafile/water_content.csv")
-
-str(water_content)
+```{r water content, message=FALSE, warning=FALSE}
+water_contennt <- read.csv("data/metafile/water_content.csv")
 
 data_summary <- function(data, varname, groupnames){
   require(plyr)
   summary_func <- function(x, col){
     c(mean = mean(x[[col]], na.rm=TRUE),
-      sd = sd(x[[col]], na.rm=TRUE))
+      se = sd(x[[col]], na.rm=TRUE) / sqrt(sum(!is.na(x[[col]]))))
   }
   data_sum<-ddply(data, groupnames, .fun=summary_func,
                   varname)
   data_sum <- rename(data_sum, c("mean" = varname))
- return(data_sum)
+  return(data_sum)
 }
 
-#volumetric soil water content (bulk density*water content)
-
-water_summary <- data_summary(water_content, varname="VWC", 
+water_summary <- data_summary(water_content, varname="WC", 
                  groupnames=c("treatment", "country"))
 
-water_summary$treatment<-factor(water_summary$treatment, levels=c("R", "RC", "C"))
+water_summary$treatment<-factor(water_summary$treatment, levels=c("C", "RC", "R"))
 water_summary$country<-factor(water_summary$country, levels=c("SE", "DE", "ES"),labels = c("Sweden", "Germany", "Spain"))
 
-#plot volumetric soil water content 
-p_water <- ggplot(water_summary, aes(treatment, VWC)) +
+#plot soil water content 
+p_water <- ggplot(water_summary, aes(treatment, WC)) +
     geom_errorbar(
-    aes(ymin = VWC-sd, ymax = VWC+sd, color = treatment),
+    aes(ymin = WC-se, ymax = WC+se, color = treatment),
     position = position_dodge(0.3), width = 0.2
     ) +
-    geom_point(aes(color = treatment), position = position_dodge(0.3)) + facet_grid(.~country) + theme_bw() + xlab("Drought treatment") + ylab("Soil water content [%Vol]") + scale_color_manual(values=wes_palette(n=3, name="Moonrise2")) + labs(color = "Drought treatment")
+    geom_point(aes(color = treatment), position = position_dodge(0.3)) + facet_grid(.~country) + theme_bw() + xlab("Drought treatment") + ylab("Soil water content [%]") + scale_color_manual(values = c("#B6854D", "#8D8680", "#0F0D0E")) + labs(color = "Drought treatment") + theme(axis.text = element_text(size = 10)) + 
+  theme(axis.title = element_text(size = 12)) +
+  theme(legend.title = element_text(size = 12)) + 
+  theme(legend.text = element_text(size = 12)) + 
+  theme(strip.text.x = element_text(size = 12))
 
 print(p_water)
-
-#ggsave("/Users/Katja/Box Sync/PhD Lund Katja/Sequencing/Functional_genes/Diamond/data_TDB/relaxed/results/vWC.jpeg", width = 20, height = 10, units = "cm")
-
 ```
-
-## gravimetric water content
-
-```{r gravimetric water content, message=FALSE, warning=FALSE}
-
-#gravimetric soil water content
-gwater_summary <- data_summary(water_content, varname="WC", 
-                 groupnames=c("treatment", "country"))
-
-gwater_summary$treatment<-factor(gwater_summary$treatment, levels=c("R", "RC", "C"))
-gwater_summary$country<-factor(gwater_summary$country, levels=c("SE", "DE", "ES"),labels = c("Sweden", "Germany", "Spain"))
-
-#plot gravimetric soil water content 
-p_gwater <- ggplot(gwater_summary, aes(treatment, WC)) +
-    geom_errorbar(
-    aes(ymin = WC-sd, ymax = WC+sd, color = treatment),
-    position = position_dodge(0.3), width = 0.2
-    ) +
-    geom_point(aes(color = treatment), position = position_dodge(0.3)) + facet_grid(.~country) + theme_bw() + xlab("Drought treatment") + ylab("Soil water content [%]") + scale_color_manual(values=wes_palette(n=3, name="Moonrise2")) + labs(color = "Drought treatment")
-
-print(p_gwater)
-
-#ggsave("/Users/Katja/Box Sync/PhD Lund Katja/Sequencing/Functional_genes/Diamond/data_TDB/relaxed/results/gWC.jpeg", width = 20, height = 10, units = "cm")
-
-```
-
-## WC/WHC ratio
-
-```{r soil moisture reduction, message=FALSE, warning=FALSE}
-
-#soil moisture reduction (WC/WHC)
-moisture_summary <- data_summary(water_content, varname="reduction", 
-                 groupnames=c("treatment", "country"))
-
-moisture_summary$treatment<-factor(moisture_summary$treatment, levels=c("R", "RC", "C"))
-moisture_summary$country<-factor(moisture_summary$country, levels=c("SE", "DE", "ES"),labels = c("Sweden", "Germany", "Spain"))
-
-#plot soil moisture reduction
-p_moisture <- ggplot(moisture_summary, aes(treatment, reduction)) +
-    geom_errorbar(
-    aes(ymin = reduction-sd, ymax = reduction+sd, color = treatment),
-    position = position_dodge(0.3), width = 0.2
-    ) +
-    geom_point(aes(color = treatment), position = position_dodge(0.3)) + facet_grid(.~country) + theme_bw() + xlab("Drought treatment") + ylab("WC/WHC") + scale_color_manual(values=wes_palette(n=3, name="Moonrise2")) + labs(color = "Drought treatment")
-
-print(p_moisture)
-
-#ggsave("/Users/Katja/Box Sync/PhD Lund Katja/Sequencing/Functional_genes/Diamond/data_TDB/relaxed/results/WC_WHC_ratio.jpeg", width = 20, height = 10, units = "cm")
-
-```
-
 # Soil carbon content 
 
 ## organic carbon 
 
 ```{r organic carbon, message=FALSE, warning=FALSE}
-
-metafile <- read.csv("C:/Users/Katja/Box Sync/PhD Lund Katja/Sequencing/Functional_genes/Diamond/data_TDB/relaxed/metafile_relaxed.csv", sep=",", row.names=1)
+metafile <- read.csv("data/metafile/metafile_relaxed.csv, sep=",", row.names=1)
 
 #organic carbon content as continuous 
 carbon_summary <- data_summary(metafile, varname="organic.C", 
-                 groupnames=c("treatment", "country"))
+                 groupnames=c("carbon_intensity", "field_pair", "country"))
 
-carbon_summary$treatment<-factor(carbon_summary$treatment, levels=c("R", "RC", "C"))
+carbon_summary$carbon_intensity<-factor(carbon_summary$carbon_intensity, levels=c("L", "H"))
+carbon_summary$field_pair<-factor(carbon_summary$field_pair, levels=c("1", "2", "3", "4", "5"))
 carbon_summary$country<-factor(carbon_summary$country, levels=c("SE", "DE", "ES"),labels = c("Sweden", "Germany", "Spain"))
 
 #plot % of SOC in high and low
-p_organicC <- ggplot(carbon_summary, aes(treatment, organic.C)) +
+p_organicC <- ggplot(carbon_summary, aes(x=field_pair, y=organic.C, group=carbon_intensity, color=carbon_intensity)) +
     geom_errorbar(
-    aes(ymin = organic.C-sd, ymax = organic.C+sd, color = treatment),
+    aes(ymin = organic.C-se, ymax = organic.C+se, color = carbon_intensity),
     position = position_dodge(0.3), width = 0.2
     ) +
-    geom_point(aes(color = treatment), position = position_dodge(0.3)) + facet_grid(.~country) + theme_bw() + xlab("Drought treatment") + ylab("Soil organic carbon [%]") + scale_color_manual(values=wes_palette(n=3, name="Moonrise2")) + labs(color = "Drought treatment")
+    geom_point(aes(color = carbon_intensity), position = position_dodge(0.3)) + facet_grid(.~country) + theme_bw() + xlab("Field site") + ylab("SOC [%]") + scale_color_manual(values = c("#5B1A18", "#D67236")) + labs(color = "SOC category") + theme(axis.text = element_text(size = 20)) + theme(axis.text = element_text(size = 12)) + 
+  theme(axis.title = element_text(size = 12)) +
+  theme(legend.title = element_text(size = 12)) + 
+  theme(legend.text = element_text(size = 12)) + 
+  theme(strip.text.x = element_text(size = 12))
 
 print(p_organicC) 
-
-#ggsave("/Users/Katja/Box Sync/PhD Lund Katja/Sequencing/Functional_genes/Diamond/data_TDB/relaxed/results/organicC.jpeg", width = 20, height = 10, units = "cm")
-
-```
-
-## inorganic C
-
-```{r inorganic carbon, message=FALSE, warning=FALSE}
-
-#inorganic carbon content
-inorg_carbon_summary <- data_summary(metafile, varname="inorganic.C", 
-                 groupnames=c("treatment", "country"))
-
-inorg_carbon_summary$treatment<-factor(inorg_carbon_summary$treatment, levels=c("R", "RC", "C"))
-inorg_carbon_summary$country<-factor(inorg_carbon_summary$country, levels=c("SE", "DE", "ES"),labels = c("Sweden", "Germany", "Spain"))
-
-#plot % inorganic C 
-p_inorganicC <- ggplot(inorg_carbon_summary, aes(treatment, inorganic.C)) +
-    geom_errorbar(
-    aes(ymin = inorganic.C-sd, ymax = inorganic.C+sd, color = treatment),
-    position = position_dodge(0.3), width = 0.2
-    ) +
-    geom_point(aes(color = treatment), position = position_dodge(0.3)) + facet_grid(.~country) + theme_bw() + xlab("Drought treatment") + ylab("Soil inorganic carbon [%]") + scale_color_manual(values=wes_palette(n=3, name="Moonrise2")) + labs(color = "Drought treatment")
-
-print(p_inorganicC)
-
-#ggsave("/Users/Katja/Box Sync/PhD Lund Katja/Sequencing/Functional_genes/Diamond/data_TDB/relaxed/results/inorganicC.jpeg", width = 20, height = 10, units = "cm")
-
-```
-
-# pH value
-
-```{r pH, message=FALSE, warning=FALSE}
-
-#pH value
-ph_summary <- data_summary(metafile, varname="pH", 
-                 groupnames=c("treatment", "country"))
-
-ph_summary$treatment<-factor(ph_summary$treatment, levels=c("R", "RC", "C"))
-ph_summary$country<-factor(ph_summary$country, levels=c("SE", "DE", "ES"),labels = c("Sweden", "Germany", "Spain"))
-
-#plot pH value
-p_pH <- ggplot(ph_summary, aes(treatment, pH)) +
-    geom_errorbar(
-    aes(ymin = pH-sd, ymax = pH+sd, color = treatment),
-    position = position_dodge(0.3), width = 0.2
-    ) +
-    geom_point(aes(color = treatment), position = position_dodge(0.3)) + facet_grid(.~country) + theme_bw() + xlab("Drought treatment") + ylab("pH value") + scale_color_manual(values=wes_palette(n=3, name="Moonrise2")) + labs(color = "Drought treatment") 
-
-print(p_pH)
-
-#ggsave("/Users/Katja/Box Sync/PhD Lund Katja/Sequencing/Functional_genes/Diamond/data_TDB/relaxed/results/pH.jpeg", width = 20, height = 10, units = "cm")
-
 ```
 
 # Mixed models 
@@ -230,26 +128,50 @@ print(p_pH)
 + https://ademos.people.uic.edu/Chapter18.html
 
 ```{r model 1, message=FALSE, warning=FALSE}
-
-#model for VWC
+#model for WC
 #carbon as actual value (continuous), as covariate
 #plot gets an ID, from 1-30, explicit nesting -> take it as random effect
 #ignore field pair
 
-mod1 <- lmer(VWC~country*treatment + SOC + (1|plot) , data=water_content, REML = TRUE)
+water_content$Site <- paste0(water_content$country, "_", water_content$field_pair)
+
+mod1 <- lmer(WC~country*treatment + SOC + (1|Site) , data=water_content, REML = TRUE)
 #test significance of the model
+set.seed(7393
 anova_mod1 <- anova(mod1, type = "III")
-anova_mod1 #treatment, country effect, slight carbon effect
+anova_mod1 
 summary(mod1)
+coef(summary(mod1))
 
 #Check assumptions of the model
-qqnorm(resid(mod1)); qqline(resid(mod1)) #Normal distr residuals
-#plot(mod1) #Homogeneity (fitted vs residuals)
+qqnorm(resid(mod1)); qqline(resid(mod1)) 
+plot(mod1) 
 
 #Check residuals for each variable (independence and homogeneity)
 #plot(resid(mod1)~water_content$country) 
 #plot(resid(mod1)~water_content$treatment)
+```
 
+### effects mod1
+
+```{r effects mod1, message=FALSE, warning=FALSE}
+#effects
+ef_mod1 <- effect("country*treatment", mod1)
+summary(ef_mod1)
+
+ef_mod1_df <- as.data.frame(ef_mod1)
+
+ggplot(ef_mod1_df, aes(country, fit, color=treatment)) + geom_point() + geom_errorbar(aes(ymin=fit-se, ymax=fit+se), width=0.4) + theme_bw(base_size=12) + facet_grid(~treatment)
+
+e1.lm1 <- predictorEffects(mod1)
+plot(e1.lm1)
+
+plot(predictorEffects(mod1))
+```
+
+### post-hoc mod1
+
+```{r post hoc mod1, message=FALSE, warning=FALSE}
 #check the contrasts
 summary(glht(mod1, linfct = mcp(treatment = "Tukey")), test = adjusted("holm")) #contrasts between R and C, RC and R
 summary(glht(mod1, linfct = mcp(country = "Tukey")), test = adjusted("holm")) #slight contrast between SE and ES
@@ -261,6 +183,8 @@ m1.emm.res_country <- pairs(m1.emm_country)
 m1.emm.res_country #Results are averaged over the levels of: treatment
 #DE-SE, ES-SE
 
+write.csv(m1.emm.res_country, "/Users/Katja/Box/PhD Lund Katja/Sequencing/Functional_genes/Diamond/data_TDB/relaxed/results/emmeans_country.csv")
+
 plot(m1.emm.res_country, comparisons = TRUE)
 
 m1.emm_treat <- emmeans(mod1, ~ treatment)
@@ -268,185 +192,34 @@ m1.emm.res_treat <- pairs(m1.emm_treat)
 m1.emm.res_treat #Results are averaged over the levels of: country
 #C-R
 
+write.csv(m1.emm.res_treat, "/Users/Katja/Box/PhD Lund Katja/Sequencing/Functional_genes/Diamond/data_TDB/relaxed/results/emmeans_treatment.csv")
+
 plot(m1.emm.res_treat, comparisons = TRUE)
-
-```
-***This is the final model***
-
-## model 2
-
-```{r model 2, message=FALSE, warning=FALSE}
-
-#global model for VWC
-#carbon as actual value (continuous)
-#fixed effects 
-#plot gets an ID, from 1-30 -> take it as random effect
-#ignore field pair
-
-mod2<- lmer(VWC~treatment+country+SOC + (1|plot), data=water_content, REML = TRUE)
-#test significance of the model
-anova_mod2 <- anova(mod2, type="III")
-anova_mod2
-summary(mod2)
-
-#Check assumptions of the model
-qqnorm(resid(mod2)); qqline(resid(mod2)) #Normal distr residuals
-#plot(mod2) #Homogeneity (fitted vs residuals)
-#Check residuals for each variable (independence and homogeneity)
-#plot(resid(mod2)~water_content$country) 
-#plot(resid(mod2)~water_content$treatment)
-
-#check the contrasts
-summary(glht(mod2, linfct = mcp(treatment = "Tukey")), test = adjusted("holm"))
-summary(glht(mod2, linfct = mcp(country = "Tukey")), test = adjusted("holm"))
-
 ```
 
-## model 3 
+## each country separetly
 
-```{r model 3, message=FALSE, warning=FALSE}
-
-#model for WC/WHC ratio
-#exclude carbon
-#exclude interactions 
-#plot as random effect
-
-lmer_WC1 <- lmer(reduction~country+treatment + (1|plot), data=water_content, REML = TRUE)
-#test significance of the model
-anova_WC1 <- anova(lmer_WC1, type="III")
-anova_WC1
-summary(lmer_WC1)
-
-#Check assumptions of the model
-qqnorm(resid(lmer_WC1)); qqline(resid(lmer_WC1)) #Normal distr residuals
-#plot(lmer_WC1) #Homogeneity (fitted vs residuals)
-#Check residuals for each variable (independence and homogeneity)
-#plot(resid(lmer_WC1)~water_content$country) 
-#plot(resid(lmer_WC1)~water_content$treatment)
-
-#check the contrasts
-summary(glht(lmer_WC1, linfct = mcp(treatment = "Tukey")), test = adjusted("holm"))
-summary(glht(lmer_WC1, linfct = mcp(country = "Tukey")), test = adjusted("holm"))
-
-```
-
-## model 4
-
-```{r model 4, message=FALSE, warning=FALSE}
-
-#model for WC/WHC ratio
-#exclude carbon
-#include interactions 
-#plot as random effect
-
-lmer_WC2 <- lmer(reduction~treatment*country + (1|plot), data=water_content, REML = TRUE)
-#test significance of the model
-anova_WC2 <- anova(lmer_WC2, type="III")
-anova_WC2
-summary(lmer_WC2)
-
-#Check assumptions of the model
-qqnorm(resid(lmer_WC2)); qqline(resid(lmer_WC2)) #Normal distr residuals
-#plot(lmer_WC2) #Homogeneity (fitted vs residuals)
-#Check residuals for each variable (independence and homogeneity)
-#plot(resid(lmer_WC2)~water_content$country) 
-#plot(resid(lmer_WC2)~water_content$treatment)
-
-#check the contrasts
-summary(glht(lmer_WC2, linfct = mcp(treatment = "Tukey")), test = adjusted("holm"))
-summary(glht(lmer_WC2, linfct = mcp(country = "Tukey")), test = adjusted("holm"))
-
-```
-
-## model VWC each country
-
-```{r model each country, message=FALSE, warning=FALSE}
-
+```{r each country, message=FALSE, warning=FALSE}
 #Sweden
-sampledata_SE <- read.csv("C:/Users/Katja/Box Sync/PhD Lund Katja/Sequencing/Functional_genes/metafile/sampledata_SE.csv", row.names = 1)
-
-lmer_WC_SE <- lmer(VWC~treatment+organic.C + (1|field_pair), data=sampledata_SE, REML = TRUE)
-#test significance of the model
-anova_WC_SE <- anova(lmer_WC_SE, type="III")
-anova_WC_SE
-summary(lmer_WC_SE) 
-
-#check the contrasts
-summary(glht(lmer_WC_SE, linfct = mcp(treatment = "Tukey")), test = adjusted("holm"))
+sampledata_SE <- read.csv("data/metafile/sampledata_SE.csv", row.names = 1)
 
 #Germany
-sampledata_DE <- read.csv("C:/Users/Katja/Box Sync/PhD Lund Katja/Sequencing/Functional_genes/metafile/sampledata_DE.csv", row.names = 1)
-
-lmer_WC_DE <- lmer(VWC~treatment+organic.C + (1|field_pair), data=sampledata_DE, REML = TRUE)
-#test significance of the model
-anova_WC_DE <- anova(lmer_WC_DE, type="III")
-anova_WC_DE
-summary(lmer_WC_DE)
-
-#check the contrasts
-summary(glht(lmer_WC_DE, linfct = mcp(treatment = "Tukey")), test = adjusted("holm"))
+sampledata_DE <- read.csv("data/metafile/sampledata_DE.csv", row.names = 1)
 
 #Spain
-sampledata_ES <- read.csv("C:/Users/Katja/Box Sync/PhD Lund Katja/Sequencing/Functional_genes/metafile/sampledata_ES.csv", row.names = 1)
-
-lmer_WC_ES <- lmer(VWC~treatment+organic.C + (1|field_pair), data=sampledata_ES, REML = TRUE)
-#test significance of the model
-anova_WC_ES <- anova(lmer_WC_ES, type="III")
-anova_WC_ES
-summary(lmer_WC_ES)
-
-#check the contrasts
-summary(glht(lmer_WC_ES, linfct = mcp(treatment = "Tukey")), test = adjusted("holm"))
-
+sampledata_ES <- read.csv("data/metafile/sampledata_SE.csv", row.names = 1)
 ```
 
 # Regression
 http://www.sthda.com/english/wiki/ggplot2-scatter-plots-quick-start-guide-r-software-and-data-visualization
 
-## regression VWC-SOC country
+## regression WC-SOC country
 
 ```{r simple regression water-SOC country, message=FALSE, warning=FALSE}
-
-p_water_carbon_country <- ggplot(water_content, aes(x=SOC, y=VWC, color=country), size=6) + geom_point() + geom_smooth(method=lm) + scale_color_manual(values = c("#9C964A", "#B6854D", "#46ACC8")) + labs(colour = "Country") + xlab("Soil organic carbon [%]") + ylab("Soil water content [%Vol]")
+p_water_carbon_country <- ggplot(water_content, aes(x=SOC, y=WC, color=country), size=6) + geom_point() + geom_smooth(method=lm) + scale_color_manual(values = c("#9C964A", "#79402E", "#46ACC8")) + labs(colour = "Climatic region") + xlab("SOC [%]") + ylab("Soil water content [%]") + theme_bw() + theme(axis.text = element_text(size = 12)) + 
+  theme(axis.title = element_text(size = 12)) +
+  theme(legend.title = element_text(size = 12)) + 
+  theme(legend.text = element_text(size = 12)) 
 
 print(p_water_carbon_country)
-
-#ggsave("/Users/Katja/Box Sync/PhD Lund Katja/Sequencing/Functional_genes/Diamond/data_TDB/relaxed/results/regression_water_carbon.jpeg", width = 20, height = 10, units = "cm")
-
-```
-
-## regression VWC-SOC treatment
-
-```{r regression water-SOC treatment, message=FALSE, warning=FALSE}
-
-p_water_carbon_treat <- ggplot(water_content, aes(x=SOC, y=VWC, color=treatment), size=6) + geom_point() + geom_smooth(method=lm) + scale_color_manual(values=wes_palette(n=3, name="Moonrise2")) + labs(colour = "Treatment") + xlab("Soil organic carbon [%]") + ylab("Soil water content [%Vol]")
-
-print(p_water_carbon_treat)
-
-#ggsave("/Users/Katja/Box Sync/PhD Lund Katja/Sequencing/Functional_genes/Diamond/data_TDB/relaxed/results/regression_water_carbon_treat.jpeg", width = 20, height = 10, units = "cm")
-
-```
-
-## regression WHC-SOC country
-
-```{r regression WHC-SOC country, message=FALSE, warning=FALSE}
-
-p_whc_carbon <- ggplot(water_content, aes(x=SOC, y=WHC, color=country), size=6) + geom_point() + geom_smooth(method=lm) + scale_color_manual(values = c("#9C964A", "#B6854D", "#46ACC8")) + labs(colour = "Country") + xlab("Soil organic carbon [%]") + ylab("Water holding capacity [%]")
-
-print(p_whc_carbon)
-
-#ggsave("/Users/Katja/Box Sync/PhD Lund Katja/Sequencing/Functional_genes/Diamond/data_TDB/relaxed/results/regression_whc_carbon.jpeg", width = 20, height = 10, units = "cm")
-
-```
-
-## regression WHC-SOC treatment
-
-```{r regression WHC-SOC treatment, message=FALSE, warning=FALSE}
-
-p_whc_carbon_treat <- ggplot(water_content, aes(x=SOC, y=WHC, color=treatment), size=6) + geom_point() + geom_smooth(method=lm) + scale_color_manual(values=wes_palette(n=3, name="Moonrise2")) + labs(colour = "Treatment") + xlab("Soil organic carbon [%]") + ylab("Water holding capacity [%]")
-
-print(p_whc_carbon_treat)
-
-#ggsave("/Users/Katja/Box Sync/PhD Lund Katja/Sequencing/Functional_genes/Diamond/data_TDB/relaxed/results/regression_whc_carbon_treat.jpeg", width = 20, height = 10, units = "cm")
-
 ```
