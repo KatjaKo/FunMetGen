@@ -1,0 +1,1352 @@
+---
+title: "EZfam_counts"
+author: "Katja Kozjek"
+date: "17/12/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+```
+
+```{r load libraries, include=FALSE}
+
+#load libraries
+library(edgeR)
+library(RColorBrewer)
+library(vegan)
+library(phyloseq)
+library(devtools)
+library(ggplot2)
+library(DESeq2)
+library(dplyr)
+library(tibble)
+library(scales)
+library(wesanderson)
+library(cowplot)
+
+```
+
+# Preprocessing
++ https://ucdavis-bioinformatics-training.github.io/2018-June-RNA-Seq-Workshop/thursday/DE.html 
++ https://informatics.fas.harvard.edu/workshops/HarvardInformatics_DEworkshop_Spring2018.html
++ https://www.bioconductor.org/packages/devel/workflows/vignettes/RNAseq123/inst/doc/limmaWorkflow.html#data-packaging
+
+```{r create DGE object, echo=F}
+
+TDB_EZfam <- readRDS("C:/Users/Katja/Box Sync/PhD Lund Katja/Sequencing/Functional_genes/Diamond/data_TDB/relaxed/rds/TDB_EZfam.rds")
+
+#original matrix
+dim(TDB_EZfam) #309 90
+sum(TDB_EZfam) #29241527
+
+#Create DGEList object, non-filtered
+EZfam_dgelist <- DGEList(TDB_EZfam)
+
+sum(EZfam_dgelist$counts) #29241527
+head(EZfam_dgelist)
+class(EZfam_dgelist)
+
+#without 2 spanish samples
+
+TDB_EZfam_remove <- readRDS("C:/Users/Katja/Box Sync/PhD Lund Katja/Sequencing/Functional_genes/Diamond/data_TDB/relaxed/rds/TDB_EZfam_remove.rds")
+
+dim(TDB_EZfam_remove) #309 88
+sum(TDB_EZfam_remove) #29133262
+
+EZfam_dgelist_rm <- DGEList(TDB_EZfam_remove)
+sum(EZfam_dgelist_rm$counts)
+class(EZfam_dgelist_rm)
+
+```
+
+## Sample information
+
+```{r organise sample information, echo=F}
+
+EZ_names <- read.csv("C:/Users/Katja/Box Sync/PhD Lund Katja/Sequencing/Functional_genes/Diamond/data_TDB/relaxed/limma/EZ_names.csv", row.names = 1)
+str(EZ_names)
+
+#without spanish samples
+EZ_names_rm <- EZ_names[-c(58,60),]
+
+all(rownames(EZ_names) == colnames(EZfam_dgelist))
+all(rownames(EZ_names_rm) == colnames(EZfam_dgelist_rm))
+
+#for Spanish samples, otherwise remove rm
+da_treat <- as.factor(EZ_names_rm$treatment)
+da_country <- as.factor(EZ_names_rm$country)
+da_SOC <- as.numeric(EZ_names_rm$organic.C)
+da_treat_country <- as.factor(EZ_names_rm$treat_country)
+da_drought_control <- as.factor(EZ_names_rm$drought_control)
+da_pH <- as.numeric(EZ_names_rm$pH)
+da_VWC <- as.numeric(EZ_names_rm$VWC)
+da_N <- as.numeric(EZ_names_rm$total.N)
+da_P <- as.numeric(EZ_names_rm$total.P)
+da_reduction <- as.numeric(EZ_names_rm$reduction)
+
+```
+
+## TMM normalization original 
++ all samples
+
+```{r normalising gene expression distributions original, echo=F}
+
+#Calculate normalization factors
+#Note: calcNormFactors doesn’t normalize the data, it just calculates normalization factors for use downstream
+
+EZfam_dgelist <- calcNormFactors(EZfam_dgelist,method=c("TMM")) #trimmed mean of M-values
+EZfam_dgelist$counts
+sum(EZfam_dgelist$counts) 
+
+```
+
+## TMM normalization without ES
+
+```{r normalising gene expression without ES, echo=F}
+
+EZfam_dgelist_rm <- calcNormFactors(EZfam_dgelist_rm,method=c("TMM")) #trimmed mean of M-values
+sum(EZfam_dgelist_rm$counts) 
+29133262/29241527 #99.6
+
+```
+
+## Remove genes
++ using the FilterByExpr()
++ https://rdrr.io/bioc/edgeR/man/filterByExpr.html
++ use with or without Spanish samples
+
++ here now without 2 Spanish samples
+
+```{r remove lowly expressed genes, echo=F}
+
+table(rowSums(EZfam_dgelist_rm$counts==0)==90)
+#FALSE 309, all genes have counts across samples
+
+#automatic way to filter genes
+keep.exprs <- filterByExpr(EZfam_dgelist_rm)
+
+#number of genes left after filtering
+EZfam_dgelist_rm <- EZfam_dgelist_rm[keep.exprs,, keep.lib.sizes=FALSE]
+dim(EZfam_dgelist_rm) #173 90 with Spanish samples
+#175  88 without Spanish s.
+
+sum(EZfam_dgelist$counts) #29166424
+29166424/29241527 #we keep 99% reads
+
+#without Spanish s.
+sum(EZfam_dgelist_rm$counts) #29063458
+29063458/29241527 #we keep 99% reads
+
+write.table(EZfam_dgelist$counts, "C:/Users/Katja/Box Sync/PhD Lund Katja/Sequencing/Functional_genes/Diamond/data_TDB/relaxed/TDB_EZfam_filt.counts.tsv",row.names = TRUE, col.names = TRUE, sep = "\t" )
+
+write.table(EZfam_dgelist_rm$counts, "C:/Users/Katja/Box Sync/PhD Lund Katja/Sequencing/Functional_genes/Diamond/data_TDB/relaxed/TDB_EZfam_rem_filt.counts.tsv",row.names = TRUE, col.names = TRUE, sep = "\t" )
+
+```
+***175 genes left after filtering from the original matrix, without 2 samples.***
+
+```{r PCA without ES, echo=F}
+
+#remove spanish samples
+#PCA with filterByExpr
+
+tdb_fam <- read.csv("C:/Users/Katja/Box Sync/PhD Lund Katja/Sequencing/Functional_genes/Diamond/data_TDB/relaxed/TDB_EZfam_filt.counts.tsv",sep = "\t", header = T, row.names = 1)
+
+tdb_fam <- tdb_fam[,-c(58,60)]
+
+metafile_pca <- read.csv("C:/Users/Katja/Box Sync/PhD Lund Katja/Sequencing/Functional_genes/Diamond/data_TDB/relaxed/metafile_relaxed.csv", sep=",")
+metafile_pca_remove <- metafile_pca[-c(58,60),]
+
+dds_fam <- DESeqDataSetFromMatrix(countData = tdb_fam,
+                              colData = metafile_pca_remove,
+                              design= ~ country + treatment)
+
+vsd_fam <- varianceStabilizingTransformation(dds_fam)
+
+p1 <- plotPCA(vsd_fam, "country")
+p2 <- plotPCA(vsd_fam, "treatment")
+plot_grid(p1, p2)
+
+#batch correction
+vsd_fam_remCOUNTRY <- vsd_fam
+assay(vsd_fam_remCOUNTRY) <- limma::removeBatchEffect(assay(vsd_fam_remCOUNTRY), vsd_fam_remCOUNTRY$country)
+
+p1 <- plotPCA(vsd_fam_remCOUNTRY, "country")
+p2 <- plotPCA(vsd_fam_remCOUNTRY, "treatment")
+plot_grid(p1, p2)
+
+```
+
+# Differential abundance analysis
+## MDS plot
+
+```{r MDS plot original filtered, echo = FALSE}
+
+#Datasets where samples do not cluster by experimental group may show little or no evidence of differential expression in the downstream analysis.
+
+#country
+col.country <- da_country
+levels(col.country) <-  brewer.pal(nlevels(col.country), "Set1")
+col.country  <- as.character(col.country)
+
+plotMDS(EZfam_dgelist_rm, labels=da_country, col=col.country) #DE + SE cluster together
+
+#treatment
+col.treatment <- da_treat
+levels(col.treatment) <-  brewer.pal(nlevels(col.treatment), "Set1")
+col.treatment <- as.character(col.treatment)
+
+plotMDS(EZfam_dgelist_rm, labels=da_treat, col=col.treatment, dim=c(1,2))
+plotMDS(EZfam_dgelist_rm, labels=da_treat, col=col.treatment, dim=c(3,4)) #no clustering according to the treatment
+
+```
+
+## Design matrix
+
+```{r create design matrix, echo=F}
+
+#treatment
+design_treat <- model.matrix(~0+da_treat) #if you remove 0 then it takes treatment C as intercept and serve as control
+colnames(design_treat) <- gsub("treatment", "", colnames(design_treat))
+colnames(design_treat)
+
+#country 
+design_country <- model.matrix(~0+da_country)
+colnames(design_country) <- gsub("country", "", colnames(design_country))
+colnames(design_country)
+
+#If we had other covariates to control for, the variable of interest appears in the first position, here we control for the effect of country or the effect of treatment
+mm1 <- model.matrix(~0 + da_country + da_treat) #treatment as batch 
+mm2 <- model.matrix(~0 + da_treat + da_country) #country as batch
+
+```
+
+## Overall DA model 
+
+### treatment as batch 
+
+```{r model 1 overall DA, echo=F}
+
+#voom model1: mean-variance trend
+v_mm1 <- voom(EZfam_dgelist_rm, mm1, plot=TRUE)
+
+#final model:mean-variance trend
+vfit_mm1 <- lmFit(v_mm1, mm1)
+head(coef(vfit_mm1))
+
+contr_mm1 <- makeContrasts(da_countryDE - da_countryES, da_countryDE - da_countrySE, da_countryES - da_countrySE, levels = colnames(coef(vfit_mm1)))
+
+vfit_mm1 <- contrasts.fit(vfit_mm1, contr_mm1) #Estimate contrast for each gene
+efit_mm1 <- eBayes(vfit_mm1, robust = TRUE) #Empirical Bayes smoothing of standard errors
+
+summary(decideTests(efit_mm1, adjust.method="BH",p.value = 0.05))
+
+topTable(efit_mm1, coef=1, number=10, adjust.method="BH", p.value=0.05, sort.by = "Amean", resort.by = "M")
+topTable(efit_mm1, coef=2, number=10, adjust.method="BH", p.value=0.05, sort.by = "Amean", resort.by = "M")
+topTable(efit_mm1, coef=3, number=10, adjust.method="BH", p.value=0.05, sort.by = "Amean", resort.by = "M")
+
+```
+
+### country as batch
+
+```{r model 2 overall DA, echo=F}
+
+#voom model2: mean-variance trend
+v_mm2 <- voom(EZfam_dgelist_rm, mm2, plot=TRUE)
+
+#final model:mean-variance trend
+vfit_mm2 <- lmFit(v_mm2, mm2)
+head(coef(vfit_mm2))
+
+contr_mm2 <- makeContrasts(da_treatR - da_treatC, da_treatRC - da_treatC, da_treatR - da_treatRC, levels = colnames(coef(vfit_mm2)))
+
+vfit_mm2 <- contrasts.fit(vfit_mm2, contr_mm2) #Estimate contrast for each gene
+efit_mm2 <- eBayes(vfit_mm2, robust = TRUE) #Empirical Bayes smoothing of standard errors
+
+summary(decideTests(efit_mm2, adjust.method="BH",p.value = 0.05))
+
+```
+
+## Contrasts 
++ between drought treatments
++ between locations
+
+```{r contrasts, echo=F}
+
+#treatment
+contr.matrix_treat <- makeContrasts(
+   CvsRC = da_treatC - da_treatRC, 
+   RCvsR = da_treatRC - da_treatR, 
+   CvsR = da_treatC - da_treatR, 
+   levels = colnames(design_treat))
+
+#location
+contr.matrix_country <- makeContrasts(
+   SEvsES = da_SE - da_ES,
+   SEvsDE = da_SE - da_DE, 
+   DEvsES = da_DE - da_ES, 
+   DESEvsES = (da_DE + da_SE) - da_ES,
+   levels = colnames(design_country))
+
+```
+
+## Model for treatment
+
+```{r model treatment, echo=F}
+
+#voom model: mean-variance trend
+v_treat <- voom(EZfam_dgelist_rm, design_treat, plot=TRUE)
+
+#final model:mean-variance trend
+vfit_treat <- lmFit(v_treat, design_treat)
+head(coef(vfit_treat))
+
+vfit_treat <- contrasts.fit(vfit_treat, contr.matrix_treat) #Estimate contrast for each gene
+efit_treat <- eBayes(vfit_treat, robust = TRUE) #Empirical Bayes smoothing of standard errors
+plotSA(efit_treat, main="Final model: Mean-variance trend")
+
+```
+***Means (x-axis) and variances (y-axis) of each gene are plotted***
+***first plot: before voom is applied to the data***
+***second plot: the trend is removed after voom precision weights are applied to the data***
+
+### DA genes treatment
+
+```{r number of DA genes in treatment, echo=F}
+
+#Examining the number of DA genes
+summary(decideTests(efit_treat, adjust.method="BH",p.value = 0.05))
+
+topTable(efit_treat, coef = "RCvsR", adjust.method = "BH", p.value = 0.05)
+topTable(efit_treat, coef = "CvsRC", adjust.method = "BH", p.value = 0.05)
+topTable(efit_treat, coef = "CvsR", adjust.method = "BH", p.value = 0.05)
+
+```
+***No contrast: 175 up-regulated in all conditions***
+***Contrast:175 non-significant***
+
+## Model for country
+
+```{r model country, echo=F}
+
+#voom model: mean-variance trend
+v_country <- voom(EZfam_dgelist_rm, design_country, plot=TRUE)
+
+#final model:mean-variance trend
+vfit_country <- lmFit(v_country, design_country)
+head(coef(vfit_country))
+
+vfit_country <- contrasts.fit(vfit_country, contr.matrix_country) #Estimate contrast for each gene
+efit_country <- eBayes(vfit_country, robust = TRUE) #Empirical Bayes smoothing of standard errors
+plotSA(efit_country, main="Final model: Mean-variance trend")
+
+```
+
+### DA genes country
+
+```{r number of DA genes in country, echo=F}
+
+#the number of significantly up- and down-regulated genes
+#based on an adjusted p-value cutoff that is set at 5% by default
+#BH is equivalent with fdr
+
+#Examining the number of DE genes
+summaryDA_country <- summary(decideTests(efit_country,adjust.method="BH",p.value = 0.05))
+summaryDA_country
+      #       SEvsES SEvsDE DEvsES
+#Down       62     38     68
+#NotSig     48     96     42
+#Up         65     41     65
+
+```
+***62 genes are found to be down-regulated in SE relative to ES, 65 are up-regulated - a total of 127 DA genes***
+***79 DA genes are found between SE and DE (38 down, 41 up)***
+***133 DA genes are found between DE and ES (68 down, 65 up)***
+***No contrast:175 up-regulated***
+
+```{r top DA location, echo=F}
+
+#(Permitted synonyms are "M" for "logFC", "A" or "Amean" for "AveExpr", "T" for "t" and "p" for "P".) 
+#genes from smallest to largest adjusted p-value
+
+#What genes are most differentially abundant?
+top_SEvsES <- topTable(efit_country, coef=1, number=10, adjust.method="BH", p.value=0.05, sort.by = "Amean", resort.by = "M")
+
+head(top_SEvsES, 5)
+
+top_SEvsDE <- topTable(efit_country, coef=2, number=10, adjust.method="BH", p.value=0.05, sort.by = "Amean", resort.by = "M")
+
+head(top_SEvsDE, 5)
+
+top_DEvsES <- topTable(efit_country, coef=3, number=10, adjust.method="BH", p.value=0.05, sort.by = "Amean", resort.by = "M")
+
+head(top_DEvsES, 5)
+
+#(Germany + Sweden) - Spain
+top_DESEvsES <- topTable(efit_country, coef=4, number=10, adjust.method="BH", p.value=0.05, sort.by = "Amean", resort.by = "M")
+
+head(top_DESEvsES, 10)
+
+#write table
+#top_country$enzyme_family <- rownames(top_country)
+#top_country <- top_country[,c("enzyme_family", names(top_country)[1:8])]
+#top_country 
+#write.table(top_country, file = "contrasts_country.txt", row.names = F, sep = "\t", quote = F)
+
+```
+
+# Correlation of gene abundance with a continuous variable? 
++ how different genes are abundant along with a continuous variable 
++ matrix without 2 Spanish samples used
+
+## SOC 
+
+```{r organic C, echo=F}
+
+model_SOC <- model.matrix(~da_SOC)
+head(model_SOC)
+
+v_SOC <- voom(EZfam_dgelist_rm, model_SOC, plot = T)
+
+fit_SOC <- lmFit(v_SOC, model_SOC)
+tmp_SOC <- contrasts.fit(fit_SOC, coef = 2) # test "SOC" coefficient
+
+tmp_SOC <- eBayes(tmp_SOC)
+summary(decideTests(tmp_SOC,adjust.method="BH", p.value=0.05))
+
+top.table_SOC <- topTable(tmp_SOC, number=10, adjust.method="BH", p.value=0.05, sort.by = "Amean", resort.by = "M")
+head(top.table_SOC, 5)
+
+```
+
+```{r plot SOC genes, echo=F}
+
+CE1 <- v_SOC$E["CE1",]
+plot(CE1 ~ da_SOC) #average expression/abundance is plotted
+intercept <- coef(fit_SOC)["CE1", "(Intercept)"]
+slope <- coef(fit_SOC)["CE1", "da_SOC"]
+abline(a = intercept, b = slope)
+
+sampleID <- c("DE","DE" ,"DE" ,"DE" ,"DE" ,"DE" ,"DE" ,"DE" ,"DE" ,"DE" ,"DE" ,"DE" ,"DE" ,"DE" ,"DE" ,"DE" ,"DE","DE","DE" ,"DE" ,"DE" ,"DE", "DE" ,"DE" ,"DE" ,"DE" ,"DE", "DE" ,"DE" ,"DE" ,"ES" , "ES"  ,"ES"  ,"ES"  ,"ES"  ,"ES" ,"ES"  ,"ES"  ,"ES" , "ES" ,"ES" ,"ES" ,"ES" ,"ES" ,"ES","ES", "ES" ,"ES" ,"ES" ,"ES" ,"ES" ,"ES" ,"ES" ,"ES","ES" ,"ES" ,"ES", "ES" ,"SE"  ,"SE"  ,"SE" ,"SE"  ,"SE"  ,"SE"  ,"SE"  ,"SE"  ,"SE" , "SE" ,"SE" ,"SE","SE" ,"SE" ,"SE", "SE" ,"SE" ,"SE" ,"SE" ,"SE" ,"SE","SE" ,"SE" ,"SE" ,"SE" ,"SE" ,"SE","SE" ,"SE","SE")
+
+CE1 <- as.data.frame(CE1)
+CE1bind <- cbind(CE1, sampleID)
+
+plot_CE1 <- ggplot(CE1bind) +
+  geom_point(aes(da_SOC, CE1, color = factor(sampleID)), 
+             position = 'jitter') +  geom_abline(slope = slope, intercept = intercept) + scale_x_continuous("SOC") + 
+   labs(colour = "Country") + theme_bw() +  scale_color_manual(values = c("#9C964A", "#B6854D","#46ACC8"))
+
+CE4 <- v_SOC$E["CE4",]
+plot(CE4 ~ da_SOC) #average expression/abundance is plotted
+intercept_CE4 <- coef(fit_SOC)["CE4", "(Intercept)"]
+slope_CE4 <- coef(fit_SOC)["CE4", "da_SOC"]
+abline(a = intercept, b = slope)
+
+CE4 <- as.data.frame(CE4)
+CE4bind <- cbind(CE4, sampleID)
+
+plot_CE4 <- ggplot(CE4bind) +
+  geom_point(aes(da_SOC, CE4, color = factor(sampleID)), 
+             position = 'jitter') +  geom_abline(slope = slope_CE4, intercept = intercept_CE4) + scale_x_continuous("SOC") + 
+   labs(colour = "Country") + theme_bw() +  scale_color_manual(values = c("#9C964A", "#B6854D","#46ACC8"))
+
+
+GT51 <- v_SOC$E["GT51",]
+plot(GT51 ~ da_SOC) #average expression/abundance is plotted
+intercept_GT51 <- coef(fit_SOC)["GT51", "(Intercept)"]
+slope_GT51 <- coef(fit_SOC)["GT51", "da_SOC"]
+abline(a = intercept, b = slope)
+
+GT51 <- as.data.frame(GT51)
+GT51bind <- cbind(GT51, sampleID)
+
+plot_GT51 <- ggplot(GT51bind) +
+  geom_point(aes(da_SOC, GT51, color = factor(sampleID)), 
+             position = 'jitter') +  geom_abline(slope = slope_GT51, intercept = intercept_GT51) + scale_x_continuous("SOC") + 
+   labs(colour = "Country") + theme_bw() +  scale_color_manual(values = c("#9C964A", "#B6854D","#46ACC8"))
+
+
+CBM50 <- v_SOC$E["CBM50",]
+plot(CBM50 ~ da_SOC) #average expression/abundance is plotted
+intercept_CBM50 <- coef(fit_SOC)["CBM50", "(Intercept)"]
+slope_CBM50 <- coef(fit_SOC)["CBM50", "da_SOC"]
+abline(a = intercept, b = slope)
+
+CBM50 <- as.data.frame(CBM50)
+CBM50bind <- cbind(CBM50, sampleID)
+
+plot_CBM50 <- ggplot(CBM50bind) +
+  geom_point(aes(da_SOC, CBM50, color = factor(sampleID)), 
+             position = 'jitter') +  geom_abline(slope = slope_CBM50, intercept = intercept_CBM50) + scale_x_continuous("SOC") + 
+   labs(colour = "Country") + theme_bw() +  scale_color_manual(values = c("#9C964A", "#B6854D","#46ACC8"))
+
+plot_grid(plot_CE1, plot_CE4, plot_GT51, plot_CBM50)
+
+ggsave("/Users/Katja/Box Sync/PhD Lund Katja/Sequencing/Functional_genes/Diamond/data_TDB/relaxed/results/SOC_genes.jpeg", width = 20, height = 15, units = "cm")
+
+```
+
+## pH
+
+```{r pH, echo=F}
+
+model_pH <- model.matrix(~da_pH)
+head(model_pH)
+
+v_pH <- voom(EZfam_dgelist_rm, model_pH, plot = T)
+
+fit_pH <- lmFit(v_pH, model_pH)
+tmp_pH <- contrasts.fit(fit_pH, coef = 2) # test "pH" coefficient
+
+tmp_pH <- eBayes(tmp_pH)
+summary(decideTests(tmp_pH, adjust.method="BH", p.value=0.05))
+
+top.table_pH <- topTable(tmp_pH,number=10, adjust.method="BH", p.value=0.05, sort.by = "Amean", resort.by = "M")
+head(top.table_pH, 5)
+
+CBM2 <- v_pH$E["CBM2",]
+plot(CBM2 ~ da_pH)
+intercept_pH_CBM2 <- coef(fit_pH)["CBM2", "(Intercept)"]
+slope_pH_CBM2 <- coef(fit_pH)["CBM2", "da_pH"]
+abline(a = intercept_pH_CBM2, b = slope_pH_CBM2)
+
+CBM2 <- as.data.frame(CBM2)
+CBM2bind <- cbind(CBM2, sampleID)
+
+plot_CBM2 <- ggplot(CBM2bind) +
+  geom_point(aes(da_pH, CBM2, color = factor(sampleID)), 
+             position = 'jitter') +  geom_abline(slope = slope_pH_CBM2, intercept = intercept_pH_CBM2) + scale_x_continuous("pH") + 
+   labs(colour = "Country") + theme_bw() +  scale_color_manual(values = c("#9C964A", "#B6854D","#46ACC8"))
+
+
+PL11 <- v_pH$E["PL11",]
+plot(PL11 ~ da_pH)
+intercept_pH_PL11 <- coef(fit_pH)["PL11", "(Intercept)"]
+slope_pH_PL11 <- coef(fit_pH)["PL11", "da_pH"]
+abline(a = intercept_pH_PL11, b = slope_pH_PL11)
+
+PL11 <- as.data.frame(PL11)
+PL11bind <- cbind(PL11, sampleID)
+
+plot_PL11 <- ggplot(PL11bind) +
+  geom_point(aes(da_pH, PL11, color = factor(sampleID)), 
+             position = 'jitter') +  geom_abline(slope = slope_pH_PL11, intercept = intercept_pH_PL11) + scale_x_continuous("pH") + 
+   labs(colour = "Country") + theme_bw() +  scale_color_manual(values = c("#9C964A", "#B6854D","#46ACC8"))
+
+plot_grid(plot_CBM2, plot_PL11)
+ggsave("/Users/Katja/Box Sync/PhD Lund Katja/Sequencing/Functional_genes/Diamond/data_TDB/relaxed/results/ph_genes.jpeg", width = 20, height = 10, units = "cm")
+
+```
+
+## Soil moisture (=VWC)
+
+```{r soil moisture, echo=F}
+
+model_moisture <- model.matrix(~da_water_content)
+head(model_moisture)
+
+v_moisture <- voom(EZfam_dgelist_rm, model_moisture, plot = T)
+
+fit_moisture <- lmFit(v_moisture, model_moisture)
+tmp_moisture <- contrasts.fit(fit_moisture, coef = 2) # test "WC/WHC" coefficient
+
+tmp_moisture <- eBayes(tmp_moisture)
+summary(decideTests(tmp_moisture, adjust.method="BH", p.value=0.05))
+
+top.table_moisture <- topTable(tmp_moisture, number=10, adjust.method="BH", p.value=0.05, sort.by = "Amean", resort.by = "M")
+head(top.table_moisture, 5)
+
+GH67 <- v_moisture$E["GH67",]
+plot(GH67 ~ da_water_content)
+intercept_WC <- coef(fit_moisture)["GH67", "(Intercept)"]
+slope_WC <- coef(fit_moisture)["GH67", "da_water_content"]
+abline(a = intercept_WC, b = slope_WC)
+
+plot_WC <- data.frame(cbind(intercept_WC, slope_WC, GH67, da_water_content))
+ggplot(data=plot_WC, aes(x=da_water_content, y=GH67)) + geom_abline(data=plot_WC,aes(slope=slope_WC,intercept=intercept_WC))
+
+```
+
+# Separate countries
+## Sweden
+
+### Prep
+
+```{r Sweden prep, echo=F}
+
+dim(EZfam_SE) #309 90
+
+#Create DGEList object, non-filtered
+EZfamSE_dgelist <- DGEList(EZfam_SE)
+
+head(EZfamSE_dgelist)
+dim(EZfamSE_dgelist)
+
+#original
+table(rowSums(EZfamSE_dgelist$counts==0)==30)
+#FALSE 291, TRUE 18, 18 genes in this dataset have zero counts across all 30 samples
+
+#automatic way to filter genes
+keep.exprsSE <- filterByExpr(EZfamSE_dgelist)
+
+#number of genes left after filtering
+EZfamSE_dgelist <- EZfamSE_dgelist[keep.exprsSE,, keep.lib.sizes=FALSE]
+dim(EZfamSE_dgelist) #174 30
+sum(EZfamSE_dgelist$counts) #8169176
+
+``` 
+
+
+### Sample info 
+
+```{r Sweden metafile, echo=F}
+
+EZfamSE_names <- EZfam_names[c(61:90),]
+all(rownames(EZfamSE_names) == colnames(EZfamSE_dgelist))
+
+treatmentSE <- as.factor(EZfamSE_names$treatment)
+SOC_SE <- as.numeric(EZfamSE_names$organic.C)
+drought_control_SE <- as.factor(EZfamSE_names$drought_control)
+pH_SE <- as.numeric(EZfamSE_names$pH)
+water_content_SE <- as.numeric(EZfamSE_names$WC)
+nitrogen_SE <- as.numeric(EZfamSE_names$total.N)
+phosphorus_SE <- as.numeric(EZfamSE_names$total.P)
+fieldSE <- as.numeric(EZfamSE_names$field_pair)
+
+``` 
+
+### Normalization
+
+```{r SE normalising gene expression distributions, echo=F}
+
+EZfamSE_dgelist <- calcNormFactors(EZfamSE_dgelist,method =c("TMM")) #trimmed mean of M-values
+
+```
+
+### MDS plot
+
+```{r plot MDS SE, echo=F}
+
+#treatment
+col.treatmentSE <- treatmentSE 
+levels(col.treatmentSE) <-  brewer.pal(nlevels(col.treatmentSE), "Set1")
+col.treatmentSE <- as.character(col.treatmentSE)
+
+plotMDS(EZfamSE_dgelist, labels=treatmentSE, col=col.treatmentSE, dim=c(1,2))
+
+#field pair
+col.fieldSE <- fieldSE 
+levels(col.fieldSE) <-  brewer.pal(nlevels(col.fieldSE), "Set1")
+col.fieldSE <- as.character(col.fieldSE)
+
+plotMDS(EZfamSE_dgelist, labels=fieldSE, col=col.fieldSE, dim=c(1,2))
+
+```
+***From the plot it seems there is no DA between treatments***
+
+### SE model for treatment
+
+```{r Sweden model, echo=F}
+
+design_SEtreat <- model.matrix(~0+treatmentSE) #if you remove 0 then it takes treatment C as intercept and serve as control
+colnames(design_SEtreat)
+
+#voom model: mean-variance trend
+v_SEtreat <- voom(EZfamSE_dgelist, design_SEtreat, plot=TRUE)
+
+#final model:mean-variance trend
+vfit_SEtreat <- lmFit(v_SEtreat, design_SEtreat)
+head(coef(vfit_SEtreat))
+
+#contrast
+contr_SEtreat <- makeContrasts(treatmentSERC - treatmentSER, treatmentSEC - treatmentSER, treatmentSEC - treatmentSERC, levels = colnames(coef(vfit_SEtreat)))
+contr_SEtreat
+
+vfit_SEtreat <- contrasts.fit(vfit_SEtreat, contr_SEtreat)
+efit_SEtreat <- eBayes(vfit_SEtreat, robust = TRUE) #Empirical Bayes smoothing of standard errors
+plotSA(efit_SEtreat, main="Final model: Mean-variance trend")
+
+summary(decideTests(efit_SEtreat, adjust.method="BH",p.value = 0.05)) #all non-significant
+
+```
+***Contrast:174 non-significant***
+
+```{r Sweden only R, echo=F}
+
+##R vs RC+C
+
+design_SE_drought <- model.matrix(~drought_control_SE)
+colnames(design_SE_drought)
+
+#voom model: mean-variance trend
+v_SEdrought <- voom(EZfamSE_dgelist, design_SE_drought, plot=TRUE)
+
+#final model:mean-variance trend
+vfit_SEdrought <- lmFit(v_SEdrought, design_SE_drought)
+head(coef(vfit_SEdrought))
+
+efit_SEdrought <- eBayes(vfit_SEdrought, robust = TRUE) #Empirical Bayes smoothing of standard errors
+plotSA(efit_SEdrought, main="Final model: Mean-variance trend")
+
+summary(decideTests(efit_SEdrought, adjust.method="BH", p.value=0.05))
+
+```
+
+## Germany
+
+### Prep
+
+```{r Germany prep}
+
+dim(EZfam_DE) #309 90
+
+#Create DGEList object, non-filtered
+EZfamDE_dgelist <- DGEList(EZfam_DE)
+
+head(EZfamDE_dgelist)
+dim(EZfamDE_dgelist)
+
+#original
+table(rowSums(EZfamDE_dgelist$counts==0)==30)
+#FALSE 278, TRUE 31, 31 genes in this dataset have zero counts across all 30 samples
+
+#automatic way to filter genes
+keep.exprsDE <- filterByExpr(EZfamDE_dgelist)
+
+#number of genes left after filtering
+EZfamDE_dgelist <- EZfamDE_dgelist[keep.exprsDE,, keep.lib.sizes=FALSE]
+dim(EZfamDE_dgelist) #172 30
+sum(EZfamDE_dgelist$counts) #7242010
+
+``` 
+
+### Sample info 
+
+```{r Germany metafile}
+
+EZfamDE_names <- EZfam_names[c(1:30),]
+all(rownames(EZfamDE_names) == colnames(EZfamDE_dgelist))
+
+treatmentDE <- as.factor(EZfamDE_names$treatment)
+SOC_DE <- as.numeric(EZfamDE_names$organic.C)
+drought_control_DE <- as.factor(EZfamDE_names$drought_control)
+pH_DE <- as.numeric(EZfamDE_names$pH)
+water_content_DE <- as.numeric(EZfamDE_names$WC)
+nitrogen_DE <- as.numeric(EZfamDE_names$total.N)
+phosphorus_DE <- as.numeric(EZfamDE_names$total.P)
+fieldDE <- as.numeric(EZfamDE_names$field_pair)
+
+``` 
+
+### Normalization
+
+```{r DE normalising gene expression distributions}
+
+EZfamDE_dgelist <- calcNormFactors(EZfamDE_dgelist,method =c("TMM")) #trimmed mean of M-values
+
+```
+
+### MDS plot
+
+```{r plot MDS DE}
+
+#treatment
+col.treatmentDE <- treatmentDE 
+levels(col.treatmentDE) <-  brewer.pal(nlevels(col.treatmentDE), "Set1")
+col.treatmentDE <- as.character(col.treatmentDE)
+
+plotMDS(EZfamDE_dgelist, labels=treatmentDE, col=col.treatmentDE, dim=c(1,2))
+
+#field pair
+col.fieldDE <- fieldDE 
+levels(col.fieldDE) <-  brewer.pal(nlevels(col.fieldDE), "Set1")
+col.fieldDE <- as.character(col.fieldDE)
+
+plotMDS(EZfamDE_dgelist, labels=fieldDE, col=col.fieldDE, dim=c(1,2))
+
+```
+***From the plot is seems there is no DA between treatments***
+
+### DE model for treatment
+
+```{r Germany model}
+
+design_DEtreat <- model.matrix(~0+treatmentDE)
+colnames(design_DEtreat)
+
+#voom model: mean-variance trend
+v_DEtreat <- voom(EZfamDE_dgelist, design_DEtreat, plot=TRUE)
+
+#final model:mean-variance trend
+vfit_DEtreat <- lmFit(v_DEtreat, design_DEtreat)
+head(coef(vfit_DEtreat))
+
+#contrast
+contr_DEtreat <- makeContrasts(treatmentDERC - treatmentDER, treatmentDEC - treatmentDER, treatmentDEC - treatmentDERC, levels = colnames(coef(vfit_DEtreat)))
+contr_DEtreat
+
+vfit_DEtreat <- contrasts.fit(vfit_DEtreat, contr_DEtreat)
+efit_DEtreat <- eBayes(vfit_DEtreat, robust = TRUE) #Empirical Bayes smoothing of standard errors
+plotSA(efit_DEtreat, main="Final model: Mean-variance trend")
+
+summary(decideTests(efit_DEtreat, adjust.method = "BH", p.value = 0.05))
+
+```
+***Contrast:172 non-significant***
+
+```{r Germany only R}
+
+#What genes are most differentially expressed/abundant?
+##R vs RC+C
+
+design_DE_drought <- model.matrix(~drought_control_DE) 
+colnames(design_DE_drought)
+
+#voom model: mean-variance trend
+v_DEdrought <- voom(EZfamDE_dgelist, design_DE_drought, plot=TRUE)
+
+#final model:mean-variance trend
+vfit_DEdrought <- lmFit(v_DEdrought, design_DE_drought)
+head(coef(vfit_DEdrought))
+
+efit_DEdrought <- eBayes(vfit_DEdrought, robust = TRUE) #Empirical Bayes smoothing of standard errors
+plotSA(efit_DEdrought, main="Final model: Mean-variance trend")
+
+summary(decideTests(efit_DEdrought, adjust.method="BH", p.value=0.05))
+
+```
+***172 up-regulated***
+
+```{r Germany fields}
+
+design_DE_field <- model.matrix(~fieldDE) 
+colnames(design_DE_field)
+
+#voom model: mean-variance trend
+v_DEfield <- voom(EZfamDE_dgelist, design_DE_field, plot=TRUE)
+
+#final model:mean-variance trend
+vfit_DEfield <- lmFit(v_DEfield, design_DE_field)
+head(coef(vfit_DEfield))
+
+efit_DEfield <- eBayes(vfit_DEfield, robust = TRUE) #Empirical Bayes smoothing of standard errors
+plotSA(efit_DEfield, main="Final model: Mean-variance trend")
+
+summary(decideTests(efit_DEfield, adjust.method="BH", p.value=0.05))
+topTable(efit_DEfield, coef=2, number=10, adjust.method="BH", p.value=0.05, sort.by = "Amean", resort.by = "M")
+
+```
+
+## Spain
+
+### Prep
+
+```{r Spain prep}
+
+dim(EZfam_ES_remove) #309  28
+
+#Create DGEList object, non-filtered
+EZfamES_dgelist <- DGEList(EZfam_ES_remove)
+
+head(EZfamES_dgelist)
+dim(EZfamES_dgelist)
+
+#original
+table(rowSums(EZfamES_dgelist$counts==0)==28)
+#FALSE 284, TRUE 25, 25 genes in this dataset have zero counts across all 28 samples
+
+#automatic way to filter genes
+keep.exprsES <- filterByExpr(EZfamES_dgelist)
+
+#number of genes left after filtering
+EZfamES_dgelist <- EZfamES_dgelist[keep.exprsES,, keep.lib.sizes=FALSE]
+dim(EZfamES_dgelist) #176  28
+
+``` 
+
+### Sample info 
+
+```{r Spain metafile}
+
+EZfamES_names <- EZfam_names[c(31:60),]
+EZfamES_names <- EZfamES_names[-c(28,30),]
+all(rownames(EZfamES_names) == colnames(EZfamES_dgelist))
+
+treatmentES <- as.factor(EZfamES_names$treatment)
+SOC_ES <- as.numeric(EZfamES_names$organic.C)
+drought_control_ES <- as.factor(EZfamES_names$drought_control)
+pH_ES <- as.numeric(EZfamES_names$pH)
+water_content_ES <- as.numeric(EZfamES_names$WC)
+nitrogen_ES <- as.numeric(EZfamES_names$total.N)
+phosphorus_ES <- as.numeric(EZfamES_names$total.P)
+fieldES <- as.numeric(EZfamES_names$field_pair)
+
+``` 
+
+### Normalization
+
+```{r ES normalising gene expression distributions}
+
+EZfamES_dgelist <- calcNormFactors(EZfamES_dgelist,method =c("TMM")) #trimmed mean of M-values
+
+```
+
+### MDS plot
+
+```{r plot MDS ES}
+
+#treatment
+col.treatmentES <- treatmentES 
+levels(col.treatmentES) <-  brewer.pal(nlevels(col.treatmentES), "Set1")
+col.treatmentES <- as.character(col.treatmentES)
+
+plotMDS(EZfamES_dgelist, labels=treatmentES, col=col.treatmentES, dim=c(1,2))
+
+#field pair
+col.fieldES <- fieldES 
+levels(col.fieldES) <-  brewer.pal(nlevels(col.fieldES), "Set1")
+col.fieldES <- as.character(col.fieldES)
+
+plotMDS(EZfamES_dgelist, labels=fieldES, col=col.fieldES, dim=c(1,2))
+
+```
+***From the plot is seems there is no DA between treatments***
+
+### ES model for treatment
+
+```{r Spain model}
+
+design_EStreat <- model.matrix(~0+treatmentES)
+colnames(design_EStreat)
+
+#voom model: mean-variance trend
+v_EStreat <- voom(EZfamES_dgelist, design_EStreat, plot=TRUE)
+
+#final model:mean-variance trend
+vfit_EStreat <- lmFit(v_EStreat, design_EStreat)
+head(coef(vfit_EStreat))
+
+#contrast
+contr_EStreat <- makeContrasts(treatmentESRC - treatmentESR, treatmentESRC- treatmentESC, treatmentESC -treatmentESR, levels = colnames(coef(vfit_EStreat)))
+contr_EStreat
+
+vfit_EStreat <- contrasts.fit(vfit_EStreat, contr_EStreat)
+efit_EStreat <- eBayes(vfit_EStreat, robust = TRUE) #Empirical Bayes smoothing of standard errors
+plotSA(efit_EStreat, main="Final model: Mean-variance trend")
+
+summary(decideTests(efit_EStreat, adjust.method = "BH", p.value = 0.05))
+
+```
+***Contrast:176 non-significant***
+
+```{r Spain top genes}
+
+##R vs RC+C
+
+design_ES_drought <- model.matrix(~drought_control_ES) #if you remove 0 then it takes traetment C as intercept and serve as control
+colnames(design_ES_drought)
+
+#voom model: mean-variance trend
+v_ESdrought <- voom(EZfamES_dgelist, design_ES_drought, plot=TRUE)
+
+#final model:mean-variance trend
+vfit_ESdrought <- lmFit(v_ESdrought, design_ES_drought)
+head(coef(vfit_ESdrought))
+
+efit_ESdrought <- eBayes(vfit_ESdrought, robust = TRUE) #Empirical Bayes smoothing of standard errors
+plotSA(efit_ESdrought, main="Final model: Mean-variance trend")
+
+summary(decideTests(efit_ESdrought, adjust.method = "BH", p.value = 0.05))
+
+```
+
+```{r Spain fields}
+
+design_ES_field <- model.matrix(~fieldES) 
+colnames(design_ES_field)
+
+#voom model: mean-variance trend
+v_ESfield <- voom(EZfamES_dgelist, design_ES_field, plot=TRUE)
+
+#final model:mean-variance trend
+vfit_ESfield <- lmFit(v_ESfield, design_ES_field)
+head(coef(vfit_ESfield))
+
+efit_ESfield <- eBayes(vfit_ESfield, robust = TRUE) #Empirical Bayes smoothing of standard errors
+plotSA(efit_ESfield, main="Final model: Mean-variance trend")
+
+summary(decideTests(efit_ESfield, adjust.method="BH", p.value=0.05))
+topTable(efit_ESfield, coef=2, number=10, adjust.method="BH", p.value=0.05, sort.by = "Amean", resort.by = "M")
+
+```
+
+# TDB EZacc
+
+## Prepare data
+
+```{r TDB EZacc prep}
+
+#original 
+dim(TDB_EZacc_relaxed) #55109 90
+sum(TDB_EZacc_relaxed) #29241527
+
+#reorder
+order_TDB_EZacc <- match(rownames(sampledata), colnames(TDB_EZacc_relaxed))
+order_TDB_EZacc  <- TDB_EZacc_relaxed[,order_TDB_EZacc]
+head(order_TDB_EZacc)
+all(rownames(sampledata) == colnames(order_TDB_EZacc))
+
+#remove Spanish s.
+order_TDB_EZacc <- order_TDB_EZacc[,-c(58,60)]
+
+#create dgelist with original matrix EZacc
+EZacc_dgelist <- DGEList(order_TDB_EZacc)
+dim(EZacc_dgelist) #55109    88
+
+EZacc_dgelist <- calcNormFactors(EZacc_dgelist,method =c("TMM")) #trimmed mean of M-values
+
+table(rowSums(EZacc_dgelist$counts==0)==88)
+#FALSE 55080, TRUE 29
+
+#automatic way to filter genes
+keep.exprs_EZacc <- filterByExpr(EZacc_dgelist)
+
+#number of genes left after filtering
+EZacc_dgelist <- EZacc_dgelist[keep.exprs_EZacc,, keep.lib.sizes=FALSE]
+dim(EZacc_dgelist) #1566   88
+sum(EZacc_dgelist$counts) #18509701
+
+plotMDS(EZacc_dgelist)
+#extract matrix with counts for EZacc
+EZacc_counts <- EZacc_dgelist$counts
+
+#write.table(EZacc_dgelist$counts, "C:/Users/Katja/Box Sync/PhD Lund Katja/Sequencing/Functional_genes/Diamond/data_TDB/relaxed/TDB_EZacc_rem_filt.counts.tsv",row.names = TRUE, col.names = TRUE, sep = "\t" )
+
+```
+
+## Model EZacc
+### treatment 
+
+```{r TDB EZacc model treatment}
+
+#treatment
+design_treat_EZacc <- model.matrix(~0+da_treatment)
+colnames(design_treat_EZacc)
+
+#voom model: mean-variance trend
+v_treat_EZacc <- voom(EZacc_dgelist, design_treat_EZacc, plot=TRUE)
+
+#final model:mean-variance trend
+vfit_treat_EZacc <- lmFit(v_treat_EZacc, design_treat_EZacc)
+
+contr.EZacc_treat <- makeContrasts(
+   CvsRC = da_treatmentC - da_treatmentRC, 
+   RCvsR = da_treatmentRC - da_treatmentR, 
+   CvsR = da_treatmentC - da_treatmentR, 
+   levels = colnames(design_treat_EZacc))
+
+vfit_treat_EZacc <- contrasts.fit(vfit_treat_EZacc, contr.EZacc_treat)
+efit_treat_EZacc <- eBayes(vfit_treat_EZacc, robust = TRUE) #Empirical Bayes smoothing of standard errors
+plotSA(efit_treat_EZacc, main="Final model: Mean-variance trend")
+
+summary(decideTests(efit_treat_EZacc, adjust.method = "BH", p.value = 0.05))
+
+```
+
+### location
+
+```{r TDB EZacc model country }
+
+#country
+design_country_EZacc <- model.matrix(~0+da_country)
+colnames(design_country_EZacc) <- gsub("country", "", colnames(design_country_EZacc))
+colnames(design_country_EZacc)
+
+#voom model: mean-variance trend
+v_country_EZacc <- voom(EZacc_dgelist, design_country_EZacc, plot=TRUE)
+
+#final model:mean-variance trend
+vfit_country_EZacc <- lmFit(v_country_EZacc, design_country_EZacc)
+
+contr.EZacc_country <- makeContrasts(
+   SEvsES = da_SE - da_ES,
+   SEvsDE = da_SE - da_DE, 
+   DEvsES = da_DE - da_ES, 
+   levels = colnames(design_country_EZacc))
+
+vfit_country_EZacc <- contrasts.fit(vfit_country_EZacc, contr.EZacc_country)
+efit_country_EZacc <- eBayes(vfit_country_EZacc, robust = TRUE) #Empirical Bayes smoothing of standard errors
+plotSA(efit_country_EZacc, main="Final model: Mean-variance trend")
+
+summary(decideTests(efit_country_EZacc, adjust.method = "BH", p.value = 0.05))
+
+#         SEvsES SEvsDE DEvsES
+#Down      623    298    658
+#NotSig    443    933    429
+#Up        498    333    477
+
+#What genes are most differentially abundant?
+top_EZAcc_SEvsES <- topTable(efit_country_EZacc, coef=1, number=10, adjust.method="BH", p.value=0.05, sort.by = "Amean", resort.by = "M")
+head(top_EZAcc_SEvsES, 5)
+
+top_EZAcc_SEvsDE <- topTable(efit_country_EZacc, coef=2, number=10, adjust.method="BH", p.value=0.05, sort.by = "Amean", resort.by = "M")
+head(top_EZAcc_SEvsDE, 5)
+
+top_EZAcc_DEvsES <- topTable(efit_country_EZacc, coef=3, number=10, adjust.method="BH", p.value=0.05, sort.by = "Amean", resort.by = "M")
+head(top_EZAcc_DEvsES, 5)
+
+```
+
+### overall
+
+```{r overall TDB EZacc}
+
+mm1_EZacc <- model.matrix(~0 + da_country + da_treatment) #treatment as batch 
+mm2_EZacc <- model.matrix(~0 + da_treatment + da_country) #country as batch
+
+```
+
+```{r model 1 overall EZacc}
+
+#voom model1: mean-variance trend
+v_mm1_EZacc <- voom(EZacc_dgelist, mm1_EZacc, plot=TRUE)
+
+#final model:mean-variance trend
+vfit_mm1_EZacc <- lmFit(v_mm1_EZacc, mm1_EZacc)
+head(coef(vfit_mm1_EZacc))
+
+contr_mm1_EZacc <- makeContrasts(da_countryDE - da_countryES, da_countryDE - da_countrySE, da_countryES - da_countrySE, levels = colnames(coef(vfit_mm1_EZacc)))
+
+vfit_mm1_EZacc <- contrasts.fit(vfit_mm1_EZacc, contr_mm1_EZacc) #Estimate contrast for each gene
+efit_mm1_EZacc <- eBayes(vfit_mm1_EZacc, robust = TRUE) #Empirical Bayes smoothing of standard errors
+
+summary(decideTests(efit_mm1_EZacc, adjust.method="BH",p.value = 0.05))
+
+topTable(efit_mm1_EZacc, coef=1, number=10, adjust.method="BH", p.value=0.05, sort.by = "Amean", resort.by = "M")
+topTable(efit_mm1_EZacc, coef=2, number=10, adjust.method="BH", p.value=0.05, sort.by = "Amean", resort.by = "M")
+topTable(efit_mm1_EZacc, coef=3, number=10, adjust.method="BH", p.value=0.05, sort.by = "Amean", resort.by = "M")
+
+```
+
+```{r model 2 overall EZacc}
+
+#voom model2: mean-variance trend
+v_mm2_EZacc <- voom(EZacc_dgelist, mm2_EZacc, plot=TRUE)
+
+#final model:mean-variance trend
+vfit_mm2_EZacc <- lmFit(v_mm2_EZacc, mm2_EZacc)
+head(coef(vfit_mm2_EZacc))
+
+contr_mm2_EZacc <- makeContrasts(da_treatmentR - da_treatmentC, da_treatmentRC - da_treatmentC, da_treatmentR - da_treatmentRC, levels = colnames(coef(vfit_mm2_EZacc)))
+
+vfit_mm2_EZacc <- contrasts.fit(vfit_mm2_EZacc, contr_mm2_EZacc) #Estimate contrast for each gene
+efit_mm2_EZacc <- eBayes(vfit_mm2_EZacc, robust = TRUE) #Empirical Bayes smoothing of standard errors
+
+summary(decideTests(efit_mm2_EZacc, adjust.method="BH",p.value = 0.05))
+
+```
+
+# Separate countries for TDB EZacc
+## Sweden
+
+```{r Sweden TDB EZacc}
+
+TDB_EZacc_SE <- order_TDB_EZacc[,c(59:88)]
+dim(TDB_EZacc_SE) #55109    30
+
+EZacc_SEdgelist <- DGEList(TDB_EZacc_SE)
+dim(EZacc_SEdgelist) #55109    30
+
+EZacc_SEdgelist <- calcNormFactors(EZacc_SEdgelist,method =c("TMM")) #trimmed mean of M-values
+
+table(rowSums(EZacc_SEdgelist$counts==0)==30)
+#FALSE 38967, TRUE 16142
+
+#automatic way to filter genes
+keep.exprs_EZaccSE <- filterByExpr(EZacc_SEdgelist)
+
+#number of genes left after filtering
+EZacc_SEdgelist <- EZacc_SEdgelist[keep.exprs_EZaccSE,, keep.lib.sizes=FALSE]
+dim(EZacc_SEdgelist) #1548   30
+sum(EZacc_SEdgelist$counts) #5302124
+
+plotMDS(EZacc_SEdgelist, labels=treatmentSE)
+
+all(rownames(EZfamSE_names) == colnames(EZacc_SEdgelist))
+
+design_SEtreat_EZacc <- model.matrix(~0+treatmentSE) #if you remove 0 then it takes treatment C as intercept and serve as control
+colnames(design_SEtreat_EZacc)
+
+#voom model: mean-variance trend
+v_SEtreat_EZacc <- voom(EZacc_SEdgelist, design_SEtreat_EZacc, plot=TRUE)
+
+#final model:mean-variance trend
+vfit_SEtreat_EZacc <- lmFit(v_SEtreat_EZacc, design_SEtreat_EZacc)
+head(coef(vfit_SEtreat_EZacc))
+
+#contrast
+contr_SEtreat_EZacc <- makeContrasts(treatmentSERC - treatmentSER, treatmentSEC - treatmentSER, treatmentSEC - treatmentSERC, levels = colnames(coef(vfit_SEtreat_EZacc)))
+
+vfit_SEtreat_EZacc <- contrasts.fit(vfit_SEtreat_EZacc, contr_SEtreat_EZacc)
+efit_SEtreat_EZacc <- eBayes(vfit_SEtreat_EZacc, robust = TRUE) #Empirical Bayes smoothing of standard errors
+plotSA(efit_SEtreat_EZacc, main="Final model: Mean-variance trend")
+
+summary(decideTests(efit_SEtreat_EZacc, adjust.method="BH",p.value = 0.05)) #all non-significant
+
+##R vs RC+C
+
+design_SE_drought_EZacc <- model.matrix(~drought_control_SE)
+colnames(design_SE_drought_EZacc)
+
+#voom model: mean-variance trend
+v_SEdrought_EZacc <- voom(EZacc_SEdgelist, design_SE_drought_EZacc, plot=TRUE)
+
+#final model:mean-variance trend
+vfit_SEdrought_EZacc <- lmFit(v_SEdrought_EZacc, design_SE_drought_EZacc)
+head(coef(vfit_SEdrought_EZacc))
+
+efit_SEdrought_EZacc <- eBayes(vfit_SEdrought_EZacc, robust = TRUE) #Empirical Bayes smoothing of standard errors
+plotSA(efit_SEdrought_EZacc, main="Final model: Mean-variance trend")
+
+summary(decideTests(efit_SEdrought_EZacc, adjust.method="BH", p.value=0.05))
+
+```
+
+## Germany
+
+```{r Germany TDB EZacc}
+
+TDB_EZacc_DE <- order_TDB_EZacc[,c(1:30)]
+dim(TDB_EZacc_DE) #55109    30
+
+EZacc_DEdgelist <- DGEList(TDB_EZacc_DE)
+dim(EZacc_DEdgelist) #55109    30
+
+EZacc_DEdgelist <- calcNormFactors(EZacc_DEdgelist,method =c("TMM")) #trimmed mean of M-values
+
+table(rowSums(EZacc_DEdgelist$counts==0)==30)
+#FALSE 38528, TRUE 16581 
+
+#automatic way to filter genes
+keep.exprs_EZaccDE <- filterByExpr(EZacc_DEdgelist)
+
+#number of genes left after filtering
+EZacc_DEdgelist <- EZacc_DEdgelist[keep.exprs_EZaccDE,, keep.lib.sizes=FALSE]
+dim(EZacc_DEdgelist) #1440    30
+sum(EZacc_DEdgelist$counts) #4629070
+
+plotMDS(EZacc_DEdgelist, labels=treatmentDE)
+
+all(rownames(EZfamDE_names) == colnames(EZacc_DEdgelist))
+
+design_DEtreat_EZacc <- model.matrix(~0+treatmentDE) #if you remove 0 then it takes treatment C as intercept and serve as control
+colnames(design_DEtreat_EZacc)
+
+#voom model: mean-variance trend
+v_DEtreat_EZacc <- voom(EZacc_DEdgelist, design_DEtreat_EZacc, plot=TRUE)
+
+#final model:mean-variance trend
+vfit_DEtreat_EZacc <- lmFit(v_DEtreat_EZacc, design_DEtreat_EZacc)
+head(coef(vfit_DEtreat_EZacc))
+
+#contrast
+contr_DEtreat_EZacc <- makeContrasts(treatmentDERC - treatmentDER, treatmentDEC - treatmentDER, treatmentDEC - treatmentDERC, levels = colnames(coef(vfit_DEtreat_EZacc)))
+
+vfit_DEtreat_EZacc <- contrasts.fit(vfit_DEtreat_EZacc, contr_DEtreat_EZacc)
+efit_DEtreat_EZacc <- eBayes(vfit_DEtreat_EZacc, robust = TRUE) #Empirical Bayes smoothing of standard errors
+plotSA(efit_DEtreat_EZacc, main="Final model: Mean-variance trend")
+
+summary(decideTests(efit_DEtreat_EZacc, adjust.method="BH",p.value = 0.05)) #1 down regulated
+topTable(efit_DEtreat_EZacc, coef=2, number=10, adjust.method="BH", p.value=0.05, sort.by = "Amean", resort.by = "M")
+#ADJ45077.1
+
+##R vs RC+C
+
+design_DE_drought_EZacc <- model.matrix(~drought_control_DE)
+colnames(design_DE_drought_EZacc)
+
+#voom model: mean-variance trend
+v_DEdrought_EZacc <- voom(EZacc_DEdgelist, design_DE_drought_EZacc, plot=TRUE)
+
+#final model:mean-variance trend
+vfit_DEdrought_EZacc <- lmFit(v_DEdrought_EZacc, design_DE_drought_EZacc)
+head(coef(vfit_DEdrought_EZacc))
+
+efit_DEdrought_EZacc <- eBayes(vfit_DEdrought_EZacc, robust = TRUE) #Empirical Bayes smoothing of standard errors
+plotSA(efit_DEdrought_EZacc, main="Final model: Mean-variance trend")
+
+summary(decideTests(efit_DEdrought_EZacc, adjust.method="BH", p.value=0.05))
+topTable(efit_DEdrought_EZacc, coef=2, number=10, adjust.method="BH", p.value=0.05, sort.by = "Amean", resort.by = "M")
+#ADJ45077.1, ALX04048.1
+
+```
+
+## Spain
+
+```{r Spain TDB EZacc}
+
+TDB_EZacc_ES <- order_TDB_EZacc[,c(31:58)]
+dim(TDB_EZacc_ES) #55109    28
+
+EZacc_ESdgelist <- DGEList(TDB_EZacc_ES)
+dim(EZacc_ESdgelist) #55109    28
+
+EZacc_ESdgelist <- calcNormFactors(EZacc_ESdgelist,method =c("TMM")) #trimmed mean of M-values
+
+table(rowSums(EZacc_ESdgelist$counts==0)==28)
+#FALSE 37938, TRUE 17171 
+
+#automatic way to filter genes
+keep.exprs_EZaccES <- filterByExpr(EZacc_ESdgelist)
+
+#number of genes left after filtering
+EZacc_ESdgelist <- EZacc_ESdgelist[keep.exprs_EZaccES,, keep.lib.sizes=FALSE]
+dim(EZacc_ESdgelist) #2443   28
+sum(EZacc_ESdgelist$counts) #10821364
+
+plotMDS(EZacc_ESdgelist, labels=treatmentES)
+
+all(rownames(EZfamES_names) == colnames(EZacc_ESdgelist))
+
+design_EStreat_EZacc <- model.matrix(~0+treatmentES) #if you remove 0 then it takes treatment C as intercept and serve as control
+colnames(design_EStreat_EZacc)
+
+#voom model: mean-variance trend
+v_EStreat_EZacc <- voom(EZacc_ESdgelist, design_EStreat_EZacc, plot=TRUE)
+
+#final model:mean-variance trend
+vfit_EStreat_EZacc <- lmFit(v_EStreat_EZacc, design_EStreat_EZacc)
+head(coef(vfit_EStreat_EZacc))
+
+#contrast
+contr_EStreat_EZacc <- makeContrasts(treatmentESRC - treatmentESR, treatmentESC - treatmentESR, treatmentESC - treatmentESRC, levels = colnames(coef(vfit_EStreat_EZacc)))
+
+vfit_EStreat_EZacc <- contrasts.fit(vfit_EStreat_EZacc, contr_EStreat_EZacc)
+efit_EStreat_EZacc <- eBayes(vfit_EStreat_EZacc, robust = TRUE) #Empirical Bayes smoothing of standard errors
+plotSA(efit_EStreat_EZacc, main="Final model: Mean-variance trend")
+
+summary(decideTests(efit_EStreat_EZacc, adjust.method="BH",p.value = 0.05)) 
+
+##R vs RC+C
+
+design_ES_drought_EZacc <- model.matrix(~drought_control_ES)
+colnames(design_ES_drought_EZacc)
+
+#voom model: mean-variance trend
+v_ESdrought_EZacc <- voom(EZacc_ESdgelist, design_ES_drought_EZacc, plot=TRUE)
+
+#final model:mean-variance trend
+vfit_ESdrought_EZacc <- lmFit(v_ESdrought_EZacc, design_ES_drought_EZacc)
+head(coef(vfit_ESdrought_EZacc))
+
+efit_ESdrought_EZacc <- eBayes(vfit_ESdrought_EZacc, robust = TRUE) #Empirical Bayes smoothing of standard errors
+plotSA(efit_ESdrought_EZacc, main="Final model: Mean-variance trend")
+
+summary(decideTests(efit_ESdrought_EZacc, adjust.method="BH", p.value=0.05))
+
+```
+
+```{r session}
+session_info()
+```
